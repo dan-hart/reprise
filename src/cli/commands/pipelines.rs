@@ -1,14 +1,16 @@
+//! List pipelines command
+
 use crate::bitrise::BitriseClient;
-use crate::cli::args::{BuildsArgs, OutputFormat};
+use crate::cli::args::{OutputFormat, PipelinesArgs};
 use crate::config::Config;
 use crate::error::{RepriseError, Result};
 use crate::output;
 
-/// Handle the builds command
-pub fn builds(
+/// Handle the pipelines command
+pub fn pipelines(
     client: &BitriseClient,
     config: &Config,
-    args: &BuildsArgs,
+    args: &PipelinesArgs,
     format: OutputFormat,
 ) -> Result<String> {
     // Resolve app slug from args or config default
@@ -34,29 +36,28 @@ pub fn builds(
     // Convert status filter to API code
     let status = args.status.map(|s| s.to_api_code());
 
-    // Fetch extra builds when filtering client-side to ensure we have enough results
+    // Fetch extra pipelines when filtering client-side to ensure we have enough results
     let fetch_limit = if triggered_by_filter.is_some() {
         args.limit.saturating_mul(4).max(100)
     } else {
         args.limit
     };
 
-    let response = client.list_builds(
+    let response = client.list_pipelines(
         app_slug,
         status,
         args.branch.as_deref(),
-        args.workflow.as_deref(),
         fetch_limit,
     )?;
 
     // Apply triggered_by filter client-side (case-insensitive partial match)
-    let builds: Vec<_> = if let Some(ref user) = triggered_by_filter {
+    let pipelines: Vec<_> = if let Some(ref user) = triggered_by_filter {
         let user_lower = user.to_lowercase();
         response
             .data
             .into_iter()
-            .filter(|b| {
-                b.triggered_by
+            .filter(|p| {
+                p.triggered_by
                     .as_ref()
                     .map(|t| t.to_lowercase().contains(&user_lower))
                     .unwrap_or(false)
@@ -67,5 +68,5 @@ pub fn builds(
         response.data.into_iter().take(args.limit as usize).collect()
     };
 
-    output::format_builds(&builds, format)
+    output::format_pipelines(&pipelines, format)
 }

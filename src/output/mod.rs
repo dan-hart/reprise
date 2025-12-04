@@ -1,7 +1,7 @@
 pub mod json;
 pub mod pretty;
 
-use crate::bitrise::{App, Build};
+use crate::bitrise::{App, Artifact, Build, Pipeline};
 use crate::cli::OutputFormat;
 use crate::error::Result;
 
@@ -34,5 +34,29 @@ pub fn format_build(build: &Build, format: OutputFormat) -> Result<String> {
     match format {
         OutputFormat::Pretty => Ok(pretty::format_build(build)),
         OutputFormat::Json => json::format_build(build),
+    }
+}
+
+/// Format a list of pipelines based on output format
+pub fn format_pipelines(pipelines: &[Pipeline], format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Pretty => Ok(pretty::format_pipelines(pipelines)),
+        OutputFormat::Json => json::format_pipelines(pipelines),
+    }
+}
+
+/// Format a single pipeline based on output format
+pub fn format_pipeline(pipeline: &Pipeline, format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Pretty => Ok(pretty::format_pipeline(pipeline)),
+        OutputFormat::Json => json::format_pipeline(pipeline),
+    }
+}
+
+/// Format a list of artifacts based on output format
+pub fn format_artifacts(artifacts: &[Artifact], format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Pretty => Ok(pretty::format_artifacts(artifacts)),
+        OutputFormat::Json => json::format_artifacts(artifacts),
     }
 }

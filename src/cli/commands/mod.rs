@@ -7,6 +7,8 @@ mod builds;
 mod cache;
 mod config;
 mod log;
+mod pipeline;
+mod pipelines;
 mod trigger;
 mod url;
 
@@ -19,5 +21,7 @@ pub use self::builds::builds;
 pub use self::cache::handle as cache;
 pub use self::config::config;
 pub use self::log::log;
+pub use self::pipeline::pipeline;
+pub use self::pipelines::pipelines;
 pub use self::trigger::trigger;
 pub use self::url::url;

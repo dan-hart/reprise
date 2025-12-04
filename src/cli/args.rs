@@ -85,8 +85,15 @@ Examples:
   reprise builds -s running       Show running builds
   reprise builds --branch main    Filter by branch
   reprise builds --workflow deploy Filter by workflow
+  reprise builds --me             Show only my builds
+  reprise builds --triggered-by alice  Show builds triggered by 'alice'
   reprise builds --limit 50       Show more builds
-  reprise builds --app other-app  Use different app")]
+  reprise builds --app other-app  Use different app
+
+Filtering:
+  Use --me to show only builds you triggered (requires API auth).
+  Use --triggered-by for builds by a specific user (partial match).
+  Combine with --status, --branch, --workflow for precise filtering.")]
     Builds(BuildsArgs),
 
     /// Show details of a specific build
@@ -131,7 +138,7 @@ Examples:
 Examples:
   reprise trigger -w primary              Trigger primary workflow
   reprise trigger -w deploy -b main       Build main branch with deploy workflow
-  reprise trigger -w ci --env KEY=value   Pass environment variable
+  reprise trigger -w ci --env MY_VAR=foo  Pass environment variable
   reprise trigger -w primary --wait       Wait for build to complete
   reprise trigger -w primary --app xyz    Trigger for specific app")]
     Trigger(TriggerArgs),
@@ -160,8 +167,51 @@ Examples:
   reprise url https://app.bitrise.io/app/xyz789             Show app info
   reprise url https://app.bitrise.io/app/xyz/pipelines/123  Show pipeline status
   reprise url <url> --browser                                Open URL in browser
-  reprise url <url> --watch                                  Watch/follow build progress")]
+  reprise url <url> --watch                                  Watch build/pipeline progress
+
+Build URL Actions:
+  reprise url <build-url> --logs         Dump the full build log
+  reprise url <build-url> --follow       Stream live log output (for running builds)
+  reprise url <build-url> --artifacts    List build artifacts
+
+App URL Actions:
+  reprise url <app-url> --set-default    Set this app as your default
+
+Tips:
+  Copy a URL from Bitrise and paste it here to quickly view status,
+  check logs, or download artifacts without setting up app context.
+  Use --watch to monitor a running build until completion.")]
     Url(UrlArgs),
+
+    /// List pipelines for the default or specified app
+    #[command(alias = "pl", after_help = "\
+Examples:
+  reprise pipelines                  List recent pipelines
+  reprise pipelines --status running Show running pipelines
+  reprise pipelines --branch main    Filter by branch
+  reprise pipelines --me             Show only my pipelines
+  reprise pipelines --triggered-by bob  Show pipelines triggered by 'bob'
+  reprise pipelines --limit 50       Show more pipelines
+  reprise pl                         Short alias
+
+Filtering:
+  Use --me to show only pipelines you triggered (requires API auth).
+  Use --triggered-by for pipelines by a specific user (partial match).
+  Combine with --status and --branch for precise filtering.")]
+    Pipelines(PipelinesArgs),
+
+    /// Show or manage a specific pipeline
+    #[command(alias = "p", after_help = "\
+Examples:
+  reprise pipeline abc123                          Show pipeline details
+  reprise pipeline trigger my-pipeline             Trigger a pipeline
+  reprise pipeline trigger deploy --branch main    Trigger with branch
+  reprise pipeline abort abc123                    Abort running pipeline
+  reprise pipeline rebuild abc123                  Rebuild a pipeline
+  reprise pipeline rebuild abc123 --partial        Rebuild only failed workflows
+  reprise pipeline watch abc123                    Watch pipeline progress
+  reprise p abc123                                 Short alias")]
+    Pipeline(PipelineArgs),
 }
 
 /// Arguments for the apps command
@@ -213,6 +263,14 @@ pub struct BuildsArgs {
     /// Filter by workflow name
     #[arg(short, long)]
     pub workflow: Option<String>,
+
+    /// Filter by user who triggered the build (partial match, case-insensitive)
+    #[arg(long, value_name = "USER")]
+    pub triggered_by: Option<String>,
+
+    /// Show only builds triggered by the current authenticated user
+    #[arg(long, conflicts_with = "triggered_by")]
+    pub me: bool,
 
     /// Maximum number of builds to show
     #[arg(short, long, default_value = "25")]
@@ -407,17 +465,177 @@ pub struct UrlArgs {
     #[arg(short, long)]
     pub browser: bool,
 
-    /// Watch/follow build progress (for build URLs)
+    /// Watch build/pipeline progress until completion
     #[arg(short, long)]
     pub watch: bool,
 
-    /// Polling interval in seconds when watching (default: 5)
+    /// Polling interval in seconds when watching/following (default: 5)
     #[arg(long, default_value = "5")]
     pub interval: u64,
 
-    /// Send desktop notification when build completes (with --watch)
+    /// Send desktop notification when build/pipeline completes
     #[arg(short, long)]
     pub notify: bool,
+
+    /// Set this app as the default (only for app URLs)
+    #[arg(long)]
+    pub set_default: bool,
+
+    /// Dump the full build log (only for build URLs)
+    #[arg(long, conflicts_with_all = ["watch", "follow"])]
+    pub logs: bool,
+
+    /// Stream live log output for running builds (only for build URLs)
+    #[arg(short, long, conflicts_with_all = ["watch", "logs"])]
+    pub follow: bool,
+
+    /// List build artifacts (only for build URLs)
+    #[arg(long)]
+    pub artifacts: bool,
+}
+
+/// Arguments for the pipelines command
+#[derive(Args)]
+pub struct PipelinesArgs {
+    /// App slug (overrides default)
+    #[arg(short, long)]
+    pub app: Option<String>,
+
+    /// Filter by pipeline status
+    #[arg(short, long, value_enum)]
+    pub status: Option<BuildStatusFilter>,
+
+    /// Filter by branch name
+    #[arg(short, long)]
+    pub branch: Option<String>,
+
+    /// Filter by user who triggered the pipeline (partial match, case-insensitive)
+    #[arg(long, value_name = "USER")]
+    pub triggered_by: Option<String>,
+
+    /// Show only pipelines triggered by the current authenticated user
+    #[arg(long, conflicts_with = "triggered_by")]
+    pub me: bool,
+
+    /// Maximum number of pipelines to show
+    #[arg(short, long, default_value = "25")]
+    pub limit: u32,
+}
+
+/// Arguments for the pipeline command
+#[derive(Args)]
+pub struct PipelineArgs {
+    /// Pipeline ID (for show command)
+    pub id: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<PipelineCommands>,
+}
+
+/// Pipeline subcommands
+#[derive(Subcommand)]
+pub enum PipelineCommands {
+    /// Show pipeline details
+    Show {
+        /// Pipeline ID
+        id: String,
+
+        /// App slug (overrides default)
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Trigger a new pipeline
+    Trigger {
+        /// Pipeline name to trigger
+        name: String,
+
+        /// Branch to build (defaults to repo's default branch)
+        #[arg(short, long)]
+        branch: Option<String>,
+
+        /// App slug (overrides default)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment variables (KEY=VALUE format, can be specified multiple times)
+        #[arg(long, value_parser = parse_env_var)]
+        env: Vec<(String, String)>,
+
+        /// Wait for pipeline to complete
+        #[arg(long)]
+        wait: bool,
+
+        /// Send desktop notification when pipeline completes (with --wait)
+        #[arg(short, long)]
+        notify: bool,
+
+        /// Polling interval in seconds when waiting (default: 10)
+        #[arg(long, default_value = "10")]
+        interval: u64,
+    },
+
+    /// Abort a running pipeline
+    Abort {
+        /// Pipeline ID
+        id: String,
+
+        /// App slug (overrides default)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Reason for aborting
+        #[arg(short, long)]
+        reason: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Rebuild a pipeline
+    Rebuild {
+        /// Pipeline ID
+        id: String,
+
+        /// App slug (overrides default)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Only rebuild failed and subsequent workflows
+        #[arg(long)]
+        partial: bool,
+
+        /// Wait for pipeline to complete
+        #[arg(long)]
+        wait: bool,
+
+        /// Send desktop notification when pipeline completes (with --wait)
+        #[arg(short, long)]
+        notify: bool,
+
+        /// Polling interval in seconds when waiting (default: 10)
+        #[arg(long, default_value = "10")]
+        interval: u64,
+    },
+
+    /// Watch pipeline progress
+    Watch {
+        /// Pipeline ID
+        id: String,
+
+        /// App slug (overrides default)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Polling interval in seconds (default: 5)
+        #[arg(long, default_value = "5")]
+        interval: u64,
+
+        /// Send desktop notification when pipeline completes
+        #[arg(short, long)]
+        notify: bool,
+    },
 }
 
 /// Parse environment variable in KEY=VALUE format

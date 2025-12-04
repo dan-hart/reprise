@@ -205,3 +205,153 @@ impl Artifact {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Response wrapper for pipeline list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineListResponse {
+    pub data: Vec<Pipeline>,
+    pub paging: Paging,
+}
+
+/// Response wrapper for single pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineResponse {
+    pub data: Pipeline,
+}
+
+/// Bitrise pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pipeline {
+    pub id: String,
+    #[serde(default)]
+    pub app_slug: String,
+    pub status: i32,
+    pub status_text: String,
+    pub triggered_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub branch: String,
+    /// The pipeline definition name/ID
+    #[serde(default)]
+    pub pipeline_id: String,
+    pub triggered_by: Option<String>,
+    pub abort_reason: Option<String>,
+    #[serde(default)]
+    pub workflows: Vec<PipelineWorkflow>,
+}
+
+impl Pipeline {
+    /// Get a human-readable status string
+    pub fn status_display(&self) -> &str {
+        match self.status {
+            0 => "running",
+            1 => "success",
+            2 => "failed",
+            3 => "aborted",
+            4 => "aborted-success",
+            _ => "unknown",
+        }
+    }
+
+    /// Calculate pipeline duration if available
+    pub fn duration(&self) -> Option<chrono::Duration> {
+        match (self.started_at, self.finished_at) {
+            (Some(start), Some(end)) => Some(end - start),
+            _ => None,
+        }
+    }
+
+    /// Format duration as human-readable string
+    pub fn duration_display(&self) -> String {
+        match self.duration() {
+            Some(d) => {
+                let secs = d.num_seconds();
+                if secs < 60 {
+                    format!("{}s", secs)
+                } else if secs < 3600 {
+                    format!("{}m {}s", secs / 60, secs % 60)
+                } else {
+                    format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                }
+            }
+            None => "-".to_string(),
+        }
+    }
+
+    /// Check if pipeline is still running
+    pub fn is_running(&self) -> bool {
+        self.status == 0
+    }
+
+    /// Check if pipeline failed
+    pub fn is_failed(&self) -> bool {
+        self.status == 2
+    }
+}
+
+/// Workflow within a pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineWorkflow {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    pub status: i32,
+    pub status_text: String,
+}
+
+impl PipelineWorkflow {
+    /// Get a human-readable status string
+    pub fn status_display(&self) -> &str {
+        match self.status {
+            0 => "running",
+            1 => "success",
+            2 => "failed",
+            3 => "aborted",
+            _ => "unknown",
+        }
+    }
+}
+
+/// Parameters for triggering a pipeline
+#[derive(Debug, Clone, Default)]
+pub struct PipelineTriggerParams {
+    pub pipeline_id: String,
+    pub branch: Option<String>,
+    pub environments: Vec<(String, String)>,
+}
+
+/// Response from triggering a pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTriggerResponse {
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub pipeline_id: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Response wrapper for current user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserResponse {
+    pub data: User,
+}
+
+/// Current authenticated user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub username: String,
+    pub slug: String,
+    pub email: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}

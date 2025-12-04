@@ -1,6 +1,6 @@
 use colored::Colorize;
 
-use crate::bitrise::{App, Build};
+use crate::bitrise::{App, Artifact, Build, Pipeline};
 
 /// Safely truncate a string to n characters, appending "..." if truncated.
 /// Works correctly with multi-byte UTF-8 characters.
@@ -194,4 +194,155 @@ pub fn format_build(build: &Build) -> String {
     }
 
     output
+}
+
+/// Format a list of pipelines for pretty output
+pub fn format_pipelines(pipelines: &[Pipeline]) -> String {
+    if pipelines.is_empty() {
+        return "No pipelines found.".to_string();
+    }
+
+    let mut output = String::new();
+    output.push_str(&format!("{}\n", "Pipelines".bold()));
+    output.push_str(&"─".repeat(80));
+    output.push('\n');
+
+    for pipeline in pipelines {
+        let status_colored = match pipeline.status {
+            0 => "running".yellow().bold(),
+            1 => "success".green(),
+            2 => "failed".red().bold(),
+            3 => "aborted".red(),
+            _ => "unknown".dimmed(),
+        };
+
+        let branch_display = truncate_str(&pipeline.branch, 20);
+        let pipeline_name = truncate_str(&pipeline.pipeline_id, 20);
+
+        // Use first 8 chars of ID for display
+        let id_display = first_n_chars(&pipeline.id, 8);
+
+        output.push_str(&format!(
+            "{:<10} {:12} {:20} {:20} {}\n",
+            id_display.bold(),
+            status_colored,
+            branch_display,
+            pipeline_name,
+            pipeline.duration_display().dimmed()
+        ));
+
+        // Show workflow statuses for running/failed pipelines
+        if pipeline.is_running() || pipeline.is_failed() {
+            for wf in &pipeline.workflows {
+                let wf_status = match wf.status {
+                    0 => "●".yellow(),
+                    1 => "✓".green(),
+                    2 => "✗".red(),
+                    3 => "○".dimmed(),
+                    _ => "?".dimmed(),
+                };
+                output.push_str(&format!("           {} {}\n", wf_status, wf.name.dimmed()));
+            }
+        }
+    }
+
+    output
+}
+
+/// Format a single pipeline for pretty output
+pub fn format_pipeline(pipeline: &Pipeline) -> String {
+    let mut output = String::new();
+
+    let status_colored = match pipeline.status {
+        0 => format!("{}", "RUNNING".yellow().bold()),
+        1 => format!("{}", "SUCCESS".green().bold()),
+        2 => format!("{}", "FAILED".red().bold()),
+        3 => format!("{}", "ABORTED".red()),
+        _ => format!("{}", "UNKNOWN".dimmed()),
+    };
+
+    output.push_str(&format!("Pipeline {} {}\n", pipeline.id.bold(), status_colored));
+    output.push_str(&"─".repeat(50));
+    output.push('\n');
+
+    output.push_str(&format!("ID:       {}\n", pipeline.id));
+    if !pipeline.pipeline_id.is_empty() {
+        output.push_str(&format!("Pipeline: {}\n", pipeline.pipeline_id));
+    }
+    output.push_str(&format!("Branch:   {}\n", pipeline.branch));
+    output.push_str(&format!("Duration: {}\n", pipeline.duration_display()));
+
+    output.push_str(&format!("\nTriggered: {}\n", pipeline.triggered_at.format("%Y-%m-%d %H:%M:%S UTC")));
+
+    if let Some(ref started) = pipeline.started_at {
+        output.push_str(&format!("Started:   {}\n", started.format("%Y-%m-%d %H:%M:%S UTC")));
+    }
+    if let Some(ref finished) = pipeline.finished_at {
+        output.push_str(&format!("Finished:  {}\n", finished.format("%Y-%m-%d %H:%M:%S UTC")));
+    }
+
+    if let Some(ref by) = pipeline.triggered_by {
+        output.push_str(&format!("\nTriggered by: {}\n", by));
+    }
+
+    // Show workflow statuses
+    if !pipeline.workflows.is_empty() {
+        output.push_str(&format!("\n{}\n", "Workflows".bold()));
+        output.push_str(&"─".repeat(30));
+        output.push('\n');
+
+        for wf in &pipeline.workflows {
+            let wf_status_colored = match wf.status {
+                0 => "running".yellow().bold(),
+                1 => "success".green(),
+                2 => "failed".red().bold(),
+                3 => "aborted".red(),
+                _ => "unknown".dimmed(),
+            };
+            output.push_str(&format!("  {} {:12}\n", wf.name, wf_status_colored));
+        }
+    }
+
+    if let Some(ref reason) = pipeline.abort_reason {
+        output.push_str(&format!("\n{}: {}\n", "Abort Reason".red().bold(), reason));
+    }
+
+    output
+}
+
+/// Format a list of artifacts for pretty output
+pub fn format_artifacts(artifacts: &[Artifact]) -> String {
+    if artifacts.is_empty() {
+        return "No artifacts found.".to_string();
+    }
+
+    let mut output = String::new();
+    output.push_str(&format!(
+        "{} ({} artifact{})\n\n",
+        "Build Artifacts".bold(),
+        artifacts.len(),
+        if artifacts.len() == 1 { "" } else { "s" }
+    ));
+
+    for artifact in artifacts {
+        output.push_str(&format!(
+            "  {} {}\n",
+            "•".cyan(),
+            artifact.title.bold()
+        ));
+        output.push_str(&format!(
+            "    Slug: {}\n",
+            artifact.slug.dimmed()
+        ));
+        output.push_str(&format!(
+            "    Size: {}\n",
+            artifact.size_display()
+        ));
+        if let Some(ref artifact_type) = artifact.artifact_type {
+            output.push_str(&format!("    Type: {}\n", artifact_type));
+        }
+        output.push('\n');
+    }
+
+    output.trim_end().to_string()
 }

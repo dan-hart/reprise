@@ -112,6 +112,15 @@ impl BitriseClient {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // User Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get the current authenticated user
+    pub fn get_me(&self) -> Result<UserResponse> {
+        self.get("/me")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // App Operations
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -308,6 +317,141 @@ impl BitriseClient {
         )?;
 
         Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// List pipelines for an app with optional filters
+    pub fn list_pipelines(
+        &self,
+        app_slug: &str,
+        status: Option<i32>,
+        branch: Option<&str>,
+        limit: u32,
+    ) -> Result<PipelineListResponse> {
+        let mut params: Vec<(&str, String)> = vec![("limit", limit.to_string())];
+
+        if let Some(s) = status {
+            params.push(("status", s.to_string()));
+        }
+        if let Some(b) = branch {
+            params.push(("branch", b.to_string()));
+        }
+
+        let query: String = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(params)
+            .finish();
+
+        self.get(&format!("/apps/{app_slug}/pipelines?{query}"))
+    }
+
+    /// Get a specific pipeline
+    pub fn get_pipeline(&self, app_slug: &str, pipeline_id: &str) -> Result<PipelineResponse> {
+        self.get(&format!("/apps/{app_slug}/pipelines/{pipeline_id}"))
+    }
+
+    /// Trigger a new pipeline
+    pub fn trigger_pipeline(
+        &self,
+        app_slug: &str,
+        params: PipelineTriggerParams,
+    ) -> Result<Pipeline> {
+        let mut build_params = serde_json::json!({
+            "pipeline_id": params.pipeline_id,
+        });
+
+        if let Some(ref branch) = params.branch {
+            build_params["branch"] = serde_json::json!(branch);
+        }
+
+        if !params.environments.is_empty() {
+            let envs: Vec<_> = params
+                .environments
+                .iter()
+                .map(|(k, v)| {
+                    serde_json::json!({
+                        "mapped_to": k,
+                        "value": v,
+                        "is_expand": true,
+                    })
+                })
+                .collect();
+            build_params["environments"] = serde_json::json!(envs);
+        }
+
+        let body = serde_json::json!({
+            "hook_info": {
+                "type": "bitrise",
+            },
+            "build_params": build_params,
+        });
+
+        let response: PipelineTriggerResponse =
+            self.post(&format!("/apps/{app_slug}/pipelines"), &body)?;
+
+        // Get the pipeline details to return full Pipeline object
+        if let Some(ref id) = response.id {
+            let pipeline_response = self.get_pipeline(app_slug, id)?;
+            Ok(pipeline_response.data)
+        } else {
+            Err(RepriseError::Api {
+                status: 500,
+                message: format!(
+                    "Pipeline triggered but no ID returned: {}",
+                    response.message
+                ),
+            })
+        }
+    }
+
+    /// Abort a running pipeline
+    pub fn abort_pipeline(
+        &self,
+        app_slug: &str,
+        pipeline_id: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let body = serde_json::json!({
+            "abort_reason": reason.unwrap_or("Aborted via reprise CLI"),
+            "abort_with_success": false,
+            "skip_notifications": false,
+        });
+
+        let _: serde_json::Value = self.post(
+            &format!("/apps/{app_slug}/pipelines/{pipeline_id}/abort"),
+            &body,
+        )?;
+
+        Ok(())
+    }
+
+    /// Rebuild a pipeline
+    pub fn rebuild_pipeline(
+        &self,
+        app_slug: &str,
+        pipeline_id: &str,
+        partial: bool,
+    ) -> Result<Pipeline> {
+        let body = serde_json::json!({
+            "partial": partial,
+        });
+
+        let response: PipelineTriggerResponse = self.post(
+            &format!("/apps/{app_slug}/pipelines/{pipeline_id}/rebuild"),
+            &body,
+        )?;
+
+        // Get the pipeline details to return full Pipeline object
+        if let Some(ref id) = response.id {
+            let pipeline_response = self.get_pipeline(app_slug, id)?;
+            Ok(pipeline_response.data)
+        } else {
+            // If no new ID, fetch the original pipeline
+            let pipeline_response = self.get_pipeline(app_slug, pipeline_id)?;
+            Ok(pipeline_response.data)
+        }
     }
 
     /// Trigger a new build

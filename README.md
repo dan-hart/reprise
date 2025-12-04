@@ -2,8 +2,13 @@
 
 A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 
+> **Note:** This is an unofficial, community-maintained project and is not affiliated with, endorsed by, or supported by Bitrise. It uses the public [Bitrise API](https://api-docs.bitrise.io/) to provide CLI functionality. For official Bitrise tools and support, please visit [bitrise.io](https://bitrise.io).
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Crates.io](https://img.shields.io/crates/v/reprise.svg)](https://crates.io/crates/reprise)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/dan-hart/reprise/ci.yml?branch=main)](https://github.com/dan-hart/reprise/actions)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dan-hart/reprise/pulls)
 
 ## Features
 
@@ -12,7 +17,10 @@ A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 - **Flexible output** - Pretty terminal output by default, JSON for automation
 - **Smart defaults** - Set a default app to skip repetitive flags
 - **Build management** - List, filter, and inspect builds with ease
-- **Log viewing** - View, tail, and save build logs
+- **Pipeline support** - Full pipeline management including trigger, watch, abort, and rebuild
+- **Log viewing** - View, tail, follow, and save build logs with syntax highlighting
+- **Smart filtering** - Filter builds and pipelines by status, branch, workflow, or creator (`--me`)
+- **URL integration** - Paste any Bitrise URL to instantly view status, logs, or artifacts
 
 ## Installation
 
@@ -86,6 +94,16 @@ reprise log abc123
 | `reprise builds` | `b` | List builds for an app |
 | `reprise build <slug>` | | Show build details |
 | `reprise log <slug>` | `logs`, `l` | View build logs |
+| `reprise trigger` | | Trigger a new build |
+| `reprise artifacts` | `art` | List or download build artifacts |
+| `reprise abort <slug>` | | Abort a running build |
+| `reprise pipelines` | `pl` | List pipelines for an app |
+| `reprise pipeline show <id>` | `p show` | Show pipeline details |
+| `reprise pipeline trigger <name>` | `p trigger` | Trigger a new pipeline |
+| `reprise pipeline watch <id>` | `p watch` | Watch pipeline progress |
+| `reprise pipeline abort <id>` | `p abort` | Abort a running pipeline |
+| `reprise pipeline rebuild <id>` | `p rebuild` | Rebuild a pipeline |
+| `reprise url <url>` | | Parse and interact with Bitrise URLs |
 | `reprise config init` | | Interactive configuration setup |
 | `reprise config show` | | Display current configuration |
 | `reprise config set` | | Set a configuration value |
@@ -166,6 +184,57 @@ reprise apps --filter "ios"
 
 ```bash
 reprise builds --app other-app-slug
+```
+
+### Filter Builds by Creator
+
+```bash
+# Show only your builds
+reprise builds --me
+
+# Show builds by a specific user
+reprise builds --triggered-by alice
+```
+
+### Work with Bitrise URLs
+
+```bash
+# View build status from URL
+reprise url https://app.bitrise.io/build/abc123
+
+# View build logs from URL
+reprise url https://app.bitrise.io/build/abc123 --logs
+
+# Follow live log output
+reprise url https://app.bitrise.io/build/abc123 --follow
+
+# List artifacts from build URL
+reprise url https://app.bitrise.io/build/abc123 --artifacts
+
+# Set default app from URL
+reprise url https://app.bitrise.io/app/xyz789 --set-default
+
+# Watch build progress with notifications
+reprise url https://app.bitrise.io/build/abc123 --watch --notify
+```
+
+### Pipeline Management
+
+```bash
+# List pipelines
+reprise pipelines
+
+# Show only your pipelines
+reprise pipelines --me
+
+# Trigger a pipeline
+reprise pipeline trigger my-pipeline --branch main
+
+# Watch pipeline progress
+reprise pipeline watch abc123 --notify
+
+# Rebuild failed workflows only
+reprise pipeline rebuild abc123 --partial
 ```
 
 ## Development

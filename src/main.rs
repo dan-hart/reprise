@@ -56,7 +56,9 @@ fn run() -> Result<(), RepriseError> {
                 Commands::Trigger(args) => commands::trigger(&client, &config, args, format)?,
                 Commands::Artifacts(args) => commands::artifacts(&client, &config, args, format)?,
                 Commands::Abort(args) => commands::abort(&client, &config, args, format)?,
-                Commands::Url(args) => commands::url(&client, &config, args, format)?,
+                Commands::Url(args) => commands::url(&client, &mut config, args, format)?,
+                Commands::Pipelines(args) => commands::pipelines(&client, &config, args, format)?,
+                Commands::Pipeline(args) => commands::pipeline(&client, &config, args, format)?,
                 Commands::Config(_) | Commands::Cache(_) => unreachable!(),
             }
         }
