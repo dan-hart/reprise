@@ -25,16 +25,16 @@ A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 
 ## Installation
 
-### Cargo (Recommended)
-
-```bash
-cargo install reprise
-```
-
-### Homebrew (macOS/Linux)
+### Homebrew (Recommended)
 
 ```bash
 brew install dan-hart/tap/reprise
+```
+
+### Cargo
+
+```bash
+cargo install reprise
 ```
 
 ### Binary Releases
