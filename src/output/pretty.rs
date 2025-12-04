@@ -38,11 +38,13 @@ pub fn format_apps(apps: &[App]) -> String {
             "active".green()
         };
 
+        let slug_display = format!("({})", app.slug);
+        let status_display = format!("[{}]", status);
         output.push_str(&format!(
             "{} {} {}\n",
             app.title.bold(),
-            format!("({})", app.slug).dimmed(),
-            format!("[{}]", status)
+            slug_display.dimmed(),
+            status_display
         ));
 
         if let Some(ref project_type) = app.project_type {

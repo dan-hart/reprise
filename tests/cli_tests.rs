@@ -7,7 +7,7 @@ use predicates::prelude::*;
 
 /// Get a command for the reprise binary
 fn reprise() -> Command {
-    Command::cargo_bin("reprise").unwrap()
+    Command::new(env!("CARGO_BIN_EXE_reprise"))
 }
 
 #[test]

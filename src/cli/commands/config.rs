@@ -179,7 +179,7 @@ fn config_init(config: &mut Config, format: OutputFormat) -> Result<String> {
     io::stdout().flush()?;
 
     let token = read_password().map_err(|e| {
-        RepriseError::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
+        RepriseError::Io(io::Error::other(e.to_string()))
     })?;
     let token = token.trim().to_string();
     println!(); // Add newline since read_password doesn't

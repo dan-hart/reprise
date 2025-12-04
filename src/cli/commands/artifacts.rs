@@ -55,8 +55,7 @@ pub fn artifacts(
     // Get app slug from args or default
     let app_slug = args
         .app
-        .as_ref()
-        .map(|s| s.as_str())
+        .as_deref()
         .or(config.defaults.app_slug.as_deref())
         .ok_or_else(|| {
             crate::error::RepriseError::Config(

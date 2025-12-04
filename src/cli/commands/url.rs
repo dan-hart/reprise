@@ -291,7 +291,7 @@ fn open_url_in_browser(url: &str) -> Result<()> {
         Command::new("open")
             .arg(url)
             .spawn()
-            .map_err(|e| RepriseError::Io(e))?;
+            .map_err(RepriseError::Io)?;
     }
 
     #[cfg(target_os = "linux")]
@@ -299,7 +299,7 @@ fn open_url_in_browser(url: &str) -> Result<()> {
         Command::new("xdg-open")
             .arg(url)
             .spawn()
-            .map_err(|e| RepriseError::Io(e))?;
+            .map_err(RepriseError::Io)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -307,7 +307,7 @@ fn open_url_in_browser(url: &str) -> Result<()> {
         Command::new("cmd")
             .args(["/C", "start", url])
             .spawn()
-            .map_err(|e| RepriseError::Io(e))?;
+            .map_err(RepriseError::Io)?;
     }
 
     Ok(())
