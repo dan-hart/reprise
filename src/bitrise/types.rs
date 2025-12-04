@@ -26,7 +26,7 @@ pub struct App {
     pub repo_url: Option<String>,
     pub is_disabled: bool,
     pub status: i32,
-    #[serde(rename = "isPublic")]
+    #[serde(rename = "isPublic", default)]
     pub is_public: bool,
     pub owner: Owner,
 }
