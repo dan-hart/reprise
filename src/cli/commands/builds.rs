@@ -35,10 +35,11 @@ pub fn builds(
     let status = args.status.map(|s| s.to_api_code());
 
     // Fetch extra builds when filtering client-side to ensure we have enough results
+    // Cap at 50 (API maximum)
     let fetch_limit = if triggered_by_filter.is_some() {
-        args.limit.saturating_mul(4)
+        args.limit.saturating_mul(4).min(50)
     } else {
-        args.limit
+        args.limit.min(50)
     };
 
     let response = client.list_builds(

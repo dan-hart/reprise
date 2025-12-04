@@ -1,9 +1,18 @@
 use colored::Colorize;
+use terminal_size::{terminal_size, Width};
 
 use crate::bitrise::{App, Artifact, Build, Pipeline};
 
+/// Get terminal width, defaulting to 100 if detection fails
+fn get_terminal_width() -> usize {
+    terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(100)
+}
+
 /// Safely truncate a string to n characters, appending "..." if truncated.
 /// Works correctly with multi-byte UTF-8 characters.
+#[allow(dead_code)] // Used in tests
 fn truncate_str(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() > max_chars {
@@ -11,6 +20,22 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
         format!("{}...", truncated)
     } else {
         s.to_string()
+    }
+}
+
+/// Pad or truncate a string to exactly n characters
+#[allow(dead_code)] // May be used in future
+fn fit_str(s: &str, width: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() > width {
+        if width <= 3 {
+            chars.iter().take(width).collect()
+        } else {
+            let truncated: String = chars.iter().take(width.saturating_sub(3)).collect();
+            format!("{}...", truncated)
+        }
+    } else {
+        format!("{:<width$}", s, width = width)
     }
 }
 
@@ -115,9 +140,11 @@ pub fn format_builds(builds: &[Build]) -> String {
         return "No builds found.".to_string();
     }
 
+    let term_width = get_terminal_width();
+
     let mut output = String::new();
     output.push_str(&format!("{}\n", "Builds".bold()));
-    output.push_str(&"─".repeat(90));
+    output.push_str(&"─".repeat(term_width.min(120)));
     output.push('\n');
 
     for build in builds {
@@ -129,16 +156,14 @@ pub fn format_builds(builds: &[Build]) -> String {
             _ => "unknown".dimmed(),
         };
 
-        let branch_display = truncate_str(&build.branch, 20);
-        let workflow_display = truncate_str(&build.triggered_workflow, 15);
-
         // Main build line with build number, status, branch, workflow, duration
+        // No truncation - show full branch and workflow names
         output.push_str(&format!(
-            "#{:<6} {:12} {:20} {:15} {}\n",
+            "#{:<6} {:12} {} {} {}\n",
             build.build_number.to_string().bold(),
             status_colored,
-            branch_display,
-            workflow_display,
+            build.branch,
+            build.triggered_workflow.dimmed(),
             build.duration_display().dimmed()
         ));
 
@@ -268,9 +293,11 @@ pub fn format_pipelines(pipelines: &[Pipeline]) -> String {
         return "No pipelines found.".to_string();
     }
 
+    let term_width = get_terminal_width();
+
     let mut output = String::new();
     output.push_str(&format!("{}\n", "Pipelines".bold()));
-    output.push_str(&"─".repeat(90));
+    output.push_str(&"─".repeat(term_width.min(120)));
     output.push('\n');
 
     for pipeline in pipelines {
@@ -282,20 +309,28 @@ pub fn format_pipelines(pipelines: &[Pipeline]) -> String {
             _ => "unknown".dimmed(),
         };
 
-        let branch_display = truncate_str(&pipeline.branch, 20);
-        let pipeline_name = truncate_str(&pipeline.pipeline_id, 20);
-
         // Use first 8 chars of ID for display in header
         let id_display = first_n_chars(&pipeline.id, 8);
 
-        output.push_str(&format!(
-            "{:<10} {:12} {:20} {:20} {}\n",
-            id_display.bold(),
-            status_colored,
-            branch_display,
-            pipeline_name,
-            pipeline.duration_display().dimmed()
-        ));
+        // No truncation - show full branch and pipeline names
+        if !pipeline.pipeline_id.is_empty() {
+            output.push_str(&format!(
+                "{:<10} {:12} {} {} {}\n",
+                id_display.bold(),
+                status_colored,
+                pipeline.branch,
+                pipeline.pipeline_id.dimmed(),
+                pipeline.duration_display().dimmed()
+            ));
+        } else {
+            output.push_str(&format!(
+                "{:<10} {:12} {} {}\n",
+                id_display.bold(),
+                status_colored,
+                pipeline.branch,
+                pipeline.duration_display().dimmed()
+            ));
+        }
 
         // Show full ID prominently for easy copy-paste
         output.push_str(&format!("           {} {}", "ID:".cyan(), pipeline.id));

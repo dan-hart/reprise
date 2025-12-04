@@ -1,6 +1,6 @@
 [package]
 name = "reprise"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A fast, feature-rich CLI for viewing build details from Bitrise"
 license = "GPL-3.0-only"
@@ -40,6 +40,9 @@ ctrlc = "3"
 
 # TTY detection (for NO_COLOR and pipe detection)
 is-terminal = "0.4"
+
+# Terminal size detection (for dynamic column widths)
+terminal_size = "0.4"
 
 # Secure password input (for API token)
 rpassword = "7"

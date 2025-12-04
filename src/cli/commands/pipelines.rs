@@ -33,40 +33,52 @@ pub fn pipelines(
         args.triggered_by.clone()
     };
 
-    // Convert status filter to API code
-    let status = args.status.map(|s| s.to_api_code());
+    // Status filter needs to be applied client-side (API doesn't support it)
+    let status_filter = args.status.map(|s| s.to_api_code());
 
     // Fetch extra pipelines when filtering client-side to ensure we have enough results
-    let fetch_limit = if triggered_by_filter.is_some() {
-        args.limit.saturating_mul(4)
+    // Cap at 50 (API maximum)
+    let needs_client_filter = triggered_by_filter.is_some() || status_filter.is_some();
+    let fetch_limit = if needs_client_filter {
+        args.limit.saturating_mul(4).min(50)
     } else {
-        args.limit
+        args.limit.min(50)
     };
 
     let response = client.list_pipelines(
         app_slug,
-        status,
+        None, // Status filtering not supported by API, filter client-side
         args.branch.as_deref(),
         fetch_limit,
     )?;
 
-    // Apply triggered_by filter client-side (case-insensitive partial match)
-    let pipelines: Vec<_> = if let Some(ref user) = triggered_by_filter {
-        let user_lower = user.to_lowercase();
-        response
-            .data
-            .into_iter()
-            .filter(|p| {
-                p.triggered_by
+    // Apply filters client-side
+    let pipelines: Vec<_> = response
+        .data
+        .into_iter()
+        .filter(|p| {
+            // Filter by status if specified
+            if let Some(status) = status_filter {
+                if p.status != status {
+                    return false;
+                }
+            }
+            // Filter by triggered_by if specified (case-insensitive partial match)
+            if let Some(ref user) = triggered_by_filter {
+                let user_lower = user.to_lowercase();
+                if !p
+                    .triggered_by
                     .as_ref()
                     .map(|t| t.to_lowercase().contains(&user_lower))
                     .unwrap_or(false)
-            })
-            .take(args.limit as usize)
-            .collect()
-    } else {
-        response.data.into_iter().take(args.limit as usize).collect()
-    };
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .take(args.limit as usize)
+        .collect();
 
     output::format_pipelines(&pipelines, format)
 }
