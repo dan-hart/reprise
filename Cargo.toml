@@ -1,6 +1,6 @@
 [package]
 name = "reprise"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "A fast, feature-rich CLI for viewing build details from Bitrise"
 license = "GPL-3.0-only"

@@ -1,4 +1,5 @@
 use reqwest::blocking::Client;
+use reqwest::redirect::Policy;
 use std::time::Duration;
 use url::Url;
 
@@ -10,12 +11,12 @@ use crate::error::{RepriseError, Result};
 const ALLOWED_HOSTS: &[&str] = &[
     "bitrise.io",
     "app.bitrise.io",
+    // Log archive hosts (S3 buckets)
     "bitrise-build-log-archives.s3.amazonaws.com",
     "bitrise-build-log-archives-eu-west-1.s3.eu-west-1.amazonaws.com",
     // Artifact download hosts (S3 buckets)
     "bitrise-prod-build-storage.s3.amazonaws.com",
     "bitrise-prod-build-storage.s3.us-west-2.amazonaws.com",
-    "amazonaws.com",
     // Google Cloud Storage (used by Bitrise for logs)
     "storage.googleapis.com",
 ];
@@ -38,6 +39,7 @@ impl BitriseClient {
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
+            .redirect(Policy::limited(5))
             .build()?;
 
         Ok(Self {
@@ -52,6 +54,7 @@ impl BitriseClient {
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
+            .redirect(Policy::limited(5))
             .build()?;
 
         Ok(Self {
@@ -67,6 +70,7 @@ impl BitriseClient {
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
+            .redirect(Policy::limited(5))
             .build()?;
 
         Ok(Self {

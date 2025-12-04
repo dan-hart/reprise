@@ -9,6 +9,7 @@ A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 [![Crates.io](https://img.shields.io/crates/v/reprise.svg)](https://crates.io/crates/reprise)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/dan-hart/reprise/ci.yml?branch=main)](https://github.com/dan-hart/reprise/actions)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dan-hart/reprise/pulls)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/codedbydan)
 
 ## Features
 
