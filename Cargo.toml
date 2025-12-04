@@ -1,0 +1,44 @@
+[package]
+name = "reprise"
+version = "0.1.0"
+edition = "2021"
+description = "A fast, feature-rich CLI for viewing build details from Bitrise"
+license = "MIT"
+keywords = ["bitrise", "ci", "builds", "cli", "devops"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI parsing
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Output formatting
+colored = "2"
+
+# Error handling
+thiserror = "2"
+
+# URL handling
+url = "2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+codegen-units = 1

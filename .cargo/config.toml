@@ -1,0 +1,20 @@
+[build]
+rustflags = [
+    "-Dunsafe_code",
+    "-Wclippy::unwrap_used",
+    "-Wclippy::expect_used",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-Dunsafe_code",
+    "-Wclippy::unwrap_used",
+    "-Wclippy::expect_used",
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-Dunsafe_code",
+    "-Wclippy::unwrap_used",
+    "-Wclippy::expect_used",
+]

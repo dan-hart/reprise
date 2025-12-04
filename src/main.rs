@@ -1,0 +1,53 @@
+use clap::Parser;
+use colored::Colorize;
+
+use reprise::bitrise::BitriseClient;
+use reprise::cli::args::{AppCommands, Cli, Commands};
+use reprise::cli::commands;
+use reprise::config::Config;
+use reprise::error::RepriseError;
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{}: {}", "error".red().bold(), e);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), RepriseError> {
+    let cli = Cli::parse();
+    let format = cli.output;
+
+    // Load configuration
+    let mut config = Config::load()?;
+
+    // Handle commands that don't need the API client
+    let output = match &cli.command {
+        Commands::Config(args) => commands::config(&mut config, args, format)?,
+
+        // app show doesn't need API client
+        Commands::App(args) if matches!(args.command, None | Some(AppCommands::Show)) => {
+            commands::app_show(&config, format)?
+        }
+
+        // All other commands need the API client
+        _ => {
+            let client = BitriseClient::new(&config)?;
+
+            match &cli.command {
+                Commands::Apps(args) => commands::apps(&client, args, format)?,
+                Commands::App(args) => commands::app_set(&client, &mut config, args, format)?,
+                Commands::Builds(args) => commands::builds(&client, &config, args, format)?,
+                Commands::Build(args) => commands::build(&client, &config, args, format)?,
+                Commands::Log(args) => commands::log(&client, &config, args, format)?,
+                Commands::Config(_) => unreachable!(),
+            }
+        }
+    };
+
+    if !output.is_empty() {
+        println!("{output}");
+    }
+
+    Ok(())
+}
