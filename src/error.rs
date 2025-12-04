@@ -116,3 +116,223 @@ impl RepriseError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper Function Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_api_helper_creates_error() {
+        let err = RepriseError::api(404, "Not found");
+        match err {
+            RepriseError::Api { status, message } => {
+                assert_eq!(status, 404);
+                assert_eq!(message, "Not found");
+            }
+            _ => panic!("Expected Api error"),
+        }
+    }
+
+    #[test]
+    fn test_api_helper_with_string() {
+        let err = RepriseError::api(500, String::from("Server error"));
+        match err {
+            RepriseError::Api { status, message } => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "Server error");
+            }
+            _ => panic!("Expected Api error"),
+        }
+    }
+
+    #[test]
+    fn test_config_missing_helper() {
+        let err = RepriseError::config_missing("API token not set");
+        match err {
+            RepriseError::ConfigMissing(msg) => {
+                assert_eq!(msg, "API token not set");
+            }
+            _ => panic!("Expected ConfigMissing error"),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - Configuration Errors (78)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_config() {
+        let err = RepriseError::Config("invalid config".to_string());
+        assert_eq!(err.exit_code(), 78);
+    }
+
+    #[test]
+    fn test_exit_code_config_missing() {
+        let err = RepriseError::ConfigMissing("missing token".to_string());
+        assert_eq!(err.exit_code(), 78);
+    }
+
+    #[test]
+    fn test_exit_code_no_default_app() {
+        let err = RepriseError::NoDefaultApp;
+        assert_eq!(err.exit_code(), 78);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - Usage Errors (2)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_invalid_argument() {
+        let err = RepriseError::InvalidArgument("bad arg".to_string());
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - Not Found Errors (66)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_app_not_found() {
+        let err = RepriseError::AppNotFound("my-app".to_string());
+        assert_eq!(err.exit_code(), 66);
+    }
+
+    #[test]
+    fn test_exit_code_build_not_found() {
+        let err = RepriseError::BuildNotFound("build-123".to_string());
+        assert_eq!(err.exit_code(), 66);
+    }
+
+    #[test]
+    fn test_exit_code_log_not_available() {
+        let err = RepriseError::LogNotAvailable("build in progress".to_string());
+        assert_eq!(err.exit_code(), 66);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - API Errors (varies by status)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_api_401_unauthorized() {
+        let err = RepriseError::api(401, "Unauthorized");
+        assert_eq!(err.exit_code(), 77); // EX_NOPERM
+    }
+
+    #[test]
+    fn test_exit_code_api_403_forbidden() {
+        let err = RepriseError::api(403, "Forbidden");
+        assert_eq!(err.exit_code(), 77); // EX_NOPERM
+    }
+
+    #[test]
+    fn test_exit_code_api_404_not_found() {
+        let err = RepriseError::api(404, "Not Found");
+        assert_eq!(err.exit_code(), 66); // EX_NOINPUT
+    }
+
+    #[test]
+    fn test_exit_code_api_500_server_error() {
+        let err = RepriseError::api(500, "Internal Server Error");
+        assert_eq!(err.exit_code(), 69); // EX_UNAVAILABLE
+    }
+
+    #[test]
+    fn test_exit_code_api_502_bad_gateway() {
+        let err = RepriseError::api(502, "Bad Gateway");
+        assert_eq!(err.exit_code(), 69); // EX_UNAVAILABLE
+    }
+
+    #[test]
+    fn test_exit_code_api_503_service_unavailable() {
+        let err = RepriseError::api(503, "Service Unavailable");
+        assert_eq!(err.exit_code(), 69); // EX_UNAVAILABLE
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - IO Errors (74)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = RepriseError::Io(io_err);
+        assert_eq!(err.exit_code(), 74); // EX_IOERR
+    }
+
+    #[test]
+    fn test_exit_code_env_error() {
+        let env_err = std::env::VarError::NotPresent;
+        let err = RepriseError::Env(env_err);
+        assert_eq!(err.exit_code(), 74); // EX_IOERR
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exit Code Tests - Parsing Errors (65)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_exit_code_json_error() {
+        let json_err: serde_json::Error = serde_json::from_str::<String>("invalid").unwrap_err();
+        let err = RepriseError::Json(json_err);
+        assert_eq!(err.exit_code(), 65); // EX_DATAERR
+    }
+
+    #[test]
+    fn test_exit_code_toml_error() {
+        let toml_err: toml::de::Error = toml::from_str::<toml::Value>("invalid = ").unwrap_err();
+        let err = RepriseError::Toml(toml_err);
+        assert_eq!(err.exit_code(), 65); // EX_DATAERR
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Error Display Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_error_display_config() {
+        let err = RepriseError::Config("invalid format".to_string());
+        assert!(err.to_string().contains("Configuration error"));
+        assert!(err.to_string().contains("invalid format"));
+    }
+
+    #[test]
+    fn test_error_display_api() {
+        let err = RepriseError::api(404, "Not found");
+        assert!(err.to_string().contains("HTTP 404"));
+        assert!(err.to_string().contains("Not found"));
+    }
+
+    #[test]
+    fn test_error_display_no_default_app() {
+        let err = RepriseError::NoDefaultApp;
+        assert!(err.to_string().contains("No default app"));
+        assert!(err.to_string().contains("reprise app set"));
+    }
+
+    #[test]
+    fn test_error_display_app_not_found() {
+        let err = RepriseError::AppNotFound("my-app".to_string());
+        assert!(err.to_string().contains("App not found"));
+        assert!(err.to_string().contains("my-app"));
+    }
+
+    #[test]
+    fn test_error_display_build_not_found() {
+        let err = RepriseError::BuildNotFound("build-slug".to_string());
+        assert!(err.to_string().contains("Build not found"));
+        assert!(err.to_string().contains("build-slug"));
+    }
+
+    #[test]
+    fn test_error_display_invalid_argument() {
+        let err = RepriseError::InvalidArgument("bad value".to_string());
+        assert!(err.to_string().contains("Invalid argument"));
+        assert!(err.to_string().contains("bad value"));
+    }
+}

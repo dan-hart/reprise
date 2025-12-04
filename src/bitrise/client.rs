@@ -16,15 +16,18 @@ const ALLOWED_HOSTS: &[&str] = &[
     "bitrise-prod-build-storage.s3.amazonaws.com",
     "bitrise-prod-build-storage.s3.us-west-2.amazonaws.com",
     "amazonaws.com",
+    // Google Cloud Storage (used by Bitrise for logs)
+    "storage.googleapis.com",
 ];
 
-const BASE_URL: &str = "https://api.bitrise.io/v0.1";
+const DEFAULT_BASE_URL: &str = "https://api.bitrise.io/v0.1";
 const USER_AGENT: &str = concat!("reprise/", env!("CARGO_PKG_VERSION"));
 
 /// Bitrise API client
 pub struct BitriseClient {
     client: Client,
     token: String,
+    base_url: String,
 }
 
 impl BitriseClient {
@@ -37,7 +40,11 @@ impl BitriseClient {
             .timeout(Duration::from_secs(30))
             .build()?;
 
-        Ok(Self { client, token })
+        Ok(Self {
+            client,
+            token,
+            base_url: DEFAULT_BASE_URL.to_string(),
+        })
     }
 
     /// Create a new client with an explicit token
@@ -50,12 +57,28 @@ impl BitriseClient {
         Ok(Self {
             client,
             token: token.into(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+        })
+    }
+
+    /// Create a new client with custom base URL (for testing)
+    #[cfg(test)]
+    pub fn with_base_url(token: impl Into<String>, base_url: impl Into<String>) -> Result<Self> {
+        let client = Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(Duration::from_secs(30))
+            .build()?;
+
+        Ok(Self {
+            client,
+            token: token.into(),
+            base_url: base_url.into(),
         })
     }
 
     /// Make a GET request to the Bitrise API
     fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let url = format!("{BASE_URL}{path}");
+        let url = format!("{}{path}", self.base_url);
         let response = self
             .client
             .get(&url)
@@ -93,7 +116,7 @@ impl BitriseClient {
         path: &str,
         body: &B,
     ) -> Result<T> {
-        let url = format!("{BASE_URL}{path}");
+        let url = format!("{}{path}", self.base_url);
         let response = self
             .client
             .post(&url)
@@ -503,5 +526,474 @@ impl BitriseClient {
                 message: format!("Build triggered but no slug returned: {}", response.message),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::{Matcher, Server};
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn make_app_json(slug: &str, title: &str) -> String {
+        format!(
+            r#"{{
+                "slug": "{}",
+                "title": "{}",
+                "project_type": "ios",
+                "provider": "github",
+                "is_disabled": false,
+                "status": 1,
+                "isPublic": false,
+                "owner": {{
+                    "account_type": "user",
+                    "name": "Test User",
+                    "slug": "user-slug"
+                }}
+            }}"#,
+            slug, title
+        )
+    }
+
+    fn make_build_json(slug: &str, build_number: i64, status: i32) -> String {
+        format!(
+            r#"{{
+                "slug": "{}",
+                "build_number": {},
+                "status": {},
+                "status_text": "success",
+                "triggered_at": "2024-01-01T12:00:00Z",
+                "branch": "main",
+                "triggered_workflow": "primary"
+            }}"#,
+            slug, build_number, status
+        )
+    }
+
+    fn make_pipeline_json(id: &str, status: i32) -> String {
+        format!(
+            r#"{{
+                "id": "{}",
+                "app_slug": "test-app",
+                "status": {},
+                "status_text": "success",
+                "triggered_at": "2024-01-01T12:00:00Z",
+                "branch": "main",
+                "pipeline_id": "build-and-test",
+                "workflows": []
+            }}"#,
+            id, status
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // User Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_me_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/me")
+            .match_header("Authorization", "test-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": {"username": "testuser", "slug": "user123", "email": "test@example.com"}}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_me();
+
+        mock.assert();
+        assert!(result.is_ok());
+        let user = result.unwrap();
+        assert_eq!(user.data.username, "testuser");
+        assert_eq!(user.data.slug, "user123");
+    }
+
+    #[test]
+    fn test_get_me_unauthorized() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/me")
+            .with_status(401)
+            .with_body(r#"{"message": "Unauthorized"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("bad-token", server.url()).unwrap();
+        let result = client.get_me();
+
+        mock.assert();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 77); // EX_NOPERM
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // App Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_apps_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps?limit=10")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"data": [{}], "paging": {{"total_item_count": 1, "page_item_limit": 10, "next": null}}}}"#,
+                make_app_json("app-slug", "Test App")
+            ))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_apps(10);
+
+        mock.assert();
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].slug, "app-slug");
+        assert_eq!(response.data[0].title, "Test App");
+    }
+
+    #[test]
+    fn test_list_apps_empty() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps?limit=10")
+            .with_status(200)
+            .with_body(r#"{"data": [], "paging": {"total_item_count": 0, "page_item_limit": 10, "next": null}}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_apps(10);
+
+        mock.assert();
+        assert!(result.is_ok());
+        assert!(result.unwrap().data.is_empty());
+    }
+
+    #[test]
+    fn test_get_app_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/my-app")
+            .with_status(200)
+            .with_body(format!(r#"{{"data": {}}}"#, make_app_json("my-app", "My App")))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_app("my-app");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let app = result.unwrap();
+        assert_eq!(app.data.slug, "my-app");
+        assert_eq!(app.data.title, "My App");
+    }
+
+    #[test]
+    fn test_get_app_not_found() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/nonexistent")
+            .with_status(404)
+            .with_body(r#"{"message": "Not found"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_app("nonexistent");
+
+        mock.assert();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 66); // EX_NOINPUT
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Build Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_builds_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/builds?limit=10")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"data": [{}], "paging": {{"total_item_count": 1, "page_item_limit": 10, "next": null}}}}"#,
+                make_build_json("build-123", 1, 1)
+            ))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_builds("test-app", None, None, None, 10);
+
+        mock.assert();
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].slug, "build-123");
+    }
+
+    #[test]
+    fn test_list_builds_with_filters() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", Matcher::Regex(r"/apps/test-app/builds\?.*status=1.*".to_string()))
+            .with_status(200)
+            .with_body(r#"{"data": [], "paging": {"total_item_count": 0, "page_item_limit": 10, "next": null}}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_builds("test-app", Some(1), Some("main"), None, 10);
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_build_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/builds/build-slug")
+            .with_status(200)
+            .with_body(format!(r#"{{"data": {}}}"#, make_build_json("build-slug", 42, 1)))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_build("test-app", "build-slug");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let build = result.unwrap();
+        assert_eq!(build.data.slug, "build-slug");
+        assert_eq!(build.data.build_number, 42);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Log Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_build_log_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/builds/build-slug/log")
+            .with_status(200)
+            .with_body(r#"{"log_chunks": [{"chunk": "Hello", "position": 0}], "expiring_raw_log_url": null, "is_archived": false}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_build_log("test-app", "build-slug");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let log = result.unwrap();
+        assert_eq!(log.log_chunks.len(), 1);
+        assert_eq!(log.log_chunks[0].chunk, "Hello");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_pipelines_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/pipelines?limit=10")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"data": [{}], "paging": {{"total_item_count": 1, "page_item_limit": 10, "next": null}}}}"#,
+                make_pipeline_json("pipeline-uuid", 1)
+            ))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_pipelines("test-app", None, None, 10);
+
+        mock.assert();
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].id, "pipeline-uuid");
+    }
+
+    #[test]
+    fn test_get_pipeline_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/pipelines/pipeline-id")
+            .with_status(200)
+            .with_body(format!(r#"{{"data": {}}}"#, make_pipeline_json("pipeline-id", 1)))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_pipeline("test-app", "pipeline-id");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let pipeline = result.unwrap();
+        assert_eq!(pipeline.data.id, "pipeline-id");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Artifact Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_artifacts_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/builds/build-slug/artifacts")
+            .with_status(200)
+            .with_body(r#"{"data": [{"title": "app.ipa", "slug": "art-slug", "artifact_type": "file", "file_size_bytes": 1024, "is_public_page_enabled": false}], "paging": {"total_item_count": 1, "page_item_limit": 25, "next": null}}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_artifacts("test-app", "build-slug");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let artifacts = result.unwrap();
+        assert_eq!(artifacts.data.len(), 1);
+        assert_eq!(artifacts.data[0].title, "app.ipa");
+    }
+
+    #[test]
+    fn test_get_artifact_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps/test-app/builds/build-slug/artifacts/art-slug")
+            .with_status(200)
+            .with_body(r#"{"data": {"title": "app.ipa", "slug": "art-slug", "artifact_type": "file", "file_size_bytes": 2048, "is_public_page_enabled": true, "expiring_download_url": "https://example.com/download"}}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_artifact("test-app", "build-slug", "art-slug");
+
+        mock.assert();
+        assert!(result.is_ok());
+        let artifact = result.unwrap();
+        assert_eq!(artifact.data.slug, "art-slug");
+        assert!(artifact.data.is_public_page_enabled);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Abort Operations Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_abort_build_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("POST", "/apps/test-app/builds/build-slug/abort")
+            .with_status(200)
+            .with_body(r#"{"status": "ok"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.abort_build("test-app", "build-slug", Some("Test abort"));
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_abort_pipeline_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("POST", "/apps/test-app/pipelines/pipeline-id/abort")
+            .with_status(200)
+            .with_body(r#"{"status": "ok"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.abort_pipeline("test-app", "pipeline-id", None);
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // URL Validation Tests (SSRF Protection)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_external_url_allowed_bitrise() {
+        let client = BitriseClient::with_base_url("token", "http://localhost").unwrap();
+        assert!(client
+            .validate_external_url("https://app.bitrise.io/log/123", "Log")
+            .is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_allowed_s3() {
+        let client = BitriseClient::with_base_url("token", "http://localhost").unwrap();
+        assert!(client
+            .validate_external_url(
+                "https://bitrise-build-log-archives.s3.amazonaws.com/log.txt",
+                "Log"
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_blocked_untrusted() {
+        let client = BitriseClient::with_base_url("token", "http://localhost").unwrap();
+        let result = client.validate_external_url("https://evil.com/malicious", "Log");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("untrusted host"));
+    }
+
+    #[test]
+    fn test_validate_external_url_invalid_url() {
+        let client = BitriseClient::with_base_url("token", "http://localhost").unwrap();
+        let result = client.validate_external_url("not-a-valid-url", "Log");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Error Handling Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_server_error_returns_api_error() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/me")
+            .with_status(500)
+            .with_body(r#"{"message": "Internal server error"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_me();
+
+        mock.assert();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.exit_code(), 69); // EX_UNAVAILABLE
+    }
+
+    #[test]
+    fn test_rate_limit_error() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("GET", "/apps?limit=10")
+            .with_status(429)
+            .with_body(r#"{"message": "Rate limit exceeded"}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.list_apps(10);
+
+        mock.assert();
+        assert!(result.is_err());
     }
 }

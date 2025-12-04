@@ -123,3 +123,258 @@ impl Config {
         self.api.token = Some(token);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Create a test Paths instance using a temp directory
+    fn make_test_paths(temp_dir: &TempDir) -> Paths {
+        let root = temp_dir.path().to_path_buf();
+        Paths {
+            config_file: root.join("config.toml"),
+            cache_dir: root.join("cache"),
+            root,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Default Value Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert!(config.api.token.is_none());
+        assert!(config.defaults.app_slug.is_none());
+        assert!(config.defaults.app_name.is_none());
+        assert_eq!(config.output.format, "pretty");
+    }
+
+    #[test]
+    fn test_output_config_default() {
+        let output = OutputConfig::default();
+        assert_eq!(output.format, "pretty");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Load/Save Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_returns_default_when_no_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        let config = Config::load_from(&paths).unwrap();
+        assert!(config.api.token.is_none());
+        assert_eq!(config.output.format, "pretty");
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        let mut config = Config::default();
+        config.api.token = Some("test-token-123".to_string());
+        config.defaults.app_slug = Some("my-app-slug".to_string());
+        config.defaults.app_name = Some("My App".to_string());
+        config.output.format = "json".to_string();
+
+        config.save_to(&paths).unwrap();
+
+        let loaded = Config::load_from(&paths).unwrap();
+        assert_eq!(loaded.api.token, Some("test-token-123".to_string()));
+        assert_eq!(loaded.defaults.app_slug, Some("my-app-slug".to_string()));
+        assert_eq!(loaded.defaults.app_name, Some("My App".to_string()));
+        assert_eq!(loaded.output.format, "json");
+    }
+
+    #[test]
+    fn test_save_creates_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        let config = Config::default();
+        config.save_to(&paths).unwrap();
+
+        assert!(paths.root.exists());
+        assert!(paths.cache_dir.exists());
+        assert!(paths.config_file.exists());
+    }
+
+    #[test]
+    fn test_load_partial_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        // Write a partial config (only api section)
+        fs::create_dir_all(&paths.root).unwrap();
+        fs::write(
+            &paths.config_file,
+            r#"
+[api]
+token = "partial-token"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_from(&paths).unwrap();
+        assert_eq!(config.api.token, Some("partial-token".to_string()));
+        assert!(config.defaults.app_slug.is_none()); // defaults to None
+        assert_eq!(config.output.format, "pretty"); // defaults to "pretty"
+    }
+
+    #[test]
+    fn test_load_empty_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        fs::create_dir_all(&paths.root).unwrap();
+        fs::write(&paths.config_file, "").unwrap();
+
+        let config = Config::load_from(&paths).unwrap();
+        assert!(config.api.token.is_none());
+        assert_eq!(config.output.format, "pretty");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Require Methods Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_require_token_when_present() {
+        let mut config = Config::default();
+        config.api.token = Some("my-token".to_string());
+
+        let token = config.require_token().unwrap();
+        assert_eq!(token, "my-token");
+    }
+
+    #[test]
+    fn test_require_token_when_missing() {
+        let config = Config::default();
+        let result = config.require_token();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("API token not configured"));
+    }
+
+    #[test]
+    fn test_require_default_app_when_present() {
+        let mut config = Config::default();
+        config.defaults.app_slug = Some("app-123".to_string());
+
+        let slug = config.require_default_app().unwrap();
+        assert_eq!(slug, "app-123");
+    }
+
+    #[test]
+    fn test_require_default_app_when_missing() {
+        let config = Config::default();
+        let result = config.require_default_app();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No default app"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Setter Methods Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_default_app_with_name() {
+        let mut config = Config::default();
+        config.set_default_app("app-slug".to_string(), Some("App Name".to_string()));
+
+        assert_eq!(config.defaults.app_slug, Some("app-slug".to_string()));
+        assert_eq!(config.defaults.app_name, Some("App Name".to_string()));
+    }
+
+    #[test]
+    fn test_set_default_app_without_name() {
+        let mut config = Config::default();
+        config.set_default_app("app-slug".to_string(), None);
+
+        assert_eq!(config.defaults.app_slug, Some("app-slug".to_string()));
+        assert!(config.defaults.app_name.is_none());
+    }
+
+    #[test]
+    fn test_set_token() {
+        let mut config = Config::default();
+        config.set_token("new-token".to_string());
+
+        assert_eq!(config.api.token, Some("new-token".to_string()));
+    }
+
+    #[test]
+    fn test_set_token_overwrites() {
+        let mut config = Config::default();
+        config.api.token = Some("old-token".to_string());
+        config.set_token("new-token".to_string());
+
+        assert_eq!(config.api.token, Some("new-token".to_string()));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Serialization Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_config_serializes_to_toml() {
+        let mut config = Config::default();
+        config.api.token = Some("test-token".to_string());
+        config.defaults.app_slug = Some("test-app".to_string());
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("token = \"test-token\""));
+        assert!(toml_str.contains("app_slug = \"test-app\""));
+    }
+
+    #[test]
+    fn test_config_deserializes_from_toml() {
+        let toml_str = r#"
+[api]
+token = "my-api-token"
+
+[defaults]
+app_slug = "my-app"
+app_name = "My Application"
+
+[output]
+format = "json"
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.api.token, Some("my-api-token".to_string()));
+        assert_eq!(config.defaults.app_slug, Some("my-app".to_string()));
+        assert_eq!(config.defaults.app_name, Some("My Application".to_string()));
+        assert_eq!(config.output.format, "json");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // File Permissions Tests (Unix only)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_sets_restrictive_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_test_paths(&temp_dir);
+
+        let mut config = Config::default();
+        config.api.token = Some("secret-token".to_string());
+        config.save_to(&paths).unwrap();
+
+        let metadata = fs::metadata(&paths.config_file).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "Config file should have 0600 permissions");
+    }
+}

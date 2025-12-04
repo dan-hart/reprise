@@ -38,7 +38,7 @@ pub fn pipelines(
 
     // Fetch extra pipelines when filtering client-side to ensure we have enough results
     let fetch_limit = if triggered_by_filter.is_some() {
-        args.limit.saturating_mul(4).max(100)
+        args.limit.saturating_mul(4)
     } else {
         args.limit
     };
