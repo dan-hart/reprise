@@ -146,8 +146,9 @@ fn pipeline_trigger(
         );
         eprintln!("  ID:       {}", pipeline.id.dimmed());
         eprintln!("  Pipeline: {}", pipeline.pipeline_id);
-        if !pipeline.branch.is_empty() {
-            eprintln!("  Branch:   {}", pipeline.branch);
+        let branch = pipeline.get_branch();
+        if !branch.is_empty() {
+            eprintln!("  Branch:   {}", branch);
         }
         eprintln!(
             "\nView at: https://app.bitrise.io/app/{}/pipelines/{}",

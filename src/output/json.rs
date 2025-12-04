@@ -101,9 +101,10 @@ mod tests {
         Pipeline {
             id: id.to_string(),
             app_slug: "test-app".to_string(),
+            app: None,
             status: 1,
             status_text: Some("success".to_string()),
-            triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            triggered_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap()),
             started_at: None,
             finished_at: None,
             branch: "main".to_string(),
@@ -111,6 +112,7 @@ mod tests {
             triggered_by: None,
             abort_reason: None,
             workflows: vec![],
+            trigger_params: None,
         }
     }
 

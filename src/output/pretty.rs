@@ -313,12 +313,13 @@ pub fn format_pipelines(pipelines: &[Pipeline]) -> String {
         let id_display = first_n_chars(&pipeline.id, 8);
 
         // No truncation - show full branch and pipeline names
+        let branch = pipeline.get_branch();
         if !pipeline.pipeline_id.is_empty() {
             output.push_str(&format!(
                 "{:<10} {:12} {} {} {}\n",
                 id_display.bold(),
                 status_colored,
-                pipeline.branch,
+                branch,
                 pipeline.pipeline_id.dimmed(),
                 pipeline.duration_display().dimmed()
             ));
@@ -327,7 +328,7 @@ pub fn format_pipelines(pipelines: &[Pipeline]) -> String {
                 "{:<10} {:12} {} {}\n",
                 id_display.bold(),
                 status_colored,
-                pipeline.branch,
+                branch,
                 pipeline.duration_display().dimmed()
             ));
         }
@@ -382,16 +383,22 @@ pub fn format_pipeline(pipeline: &Pipeline) -> String {
     if !pipeline.pipeline_id.is_empty() {
         output.push_str(&format!("{} {}\n", "Pipeline:".cyan(), pipeline.pipeline_id));
     }
-    output.push_str(&format!("{} {}\n", "Branch:".cyan(), pipeline.branch));
+    let branch = pipeline.get_branch();
+    if !branch.is_empty() {
+        output.push_str(&format!("{} {}\n", "Branch:".cyan(), branch));
+    }
     output.push_str(&format!("{} {}\n", "Duration:".cyan(), pipeline.duration_display()));
 
     // Show app slug if available
-    if !pipeline.app_slug.is_empty() {
-        output.push_str(&format!("{} {}\n", "App:".cyan(), pipeline.app_slug));
+    let app_slug = pipeline.get_app_slug();
+    if !app_slug.is_empty() {
+        output.push_str(&format!("{} {}\n", "App:".cyan(), app_slug));
     }
 
     // Timestamps section
-    output.push_str(&format!("\n{} {}\n", "Triggered:".cyan(), pipeline.triggered_at.format("%Y-%m-%d %H:%M:%S UTC")));
+    if let Some(ref triggered) = pipeline.triggered_at {
+        output.push_str(&format!("\n{} {}\n", "Triggered:".cyan(), triggered.format("%Y-%m-%d %H:%M:%S UTC")));
+    }
 
     if let Some(ref started) = pipeline.started_at {
         output.push_str(&format!("{} {}\n", "Started:".cyan(), started.format("%Y-%m-%d %H:%M:%S UTC")));
@@ -427,11 +434,12 @@ pub fn format_pipeline(pipeline: &Pipeline) -> String {
     }
 
     // Bitrise URL (if we have app_slug)
-    if !pipeline.app_slug.is_empty() {
+    let url_app_slug = pipeline.get_app_slug();
+    if !url_app_slug.is_empty() {
         output.push_str(&format!(
             "\n{} https://app.bitrise.io/app/{}/pipelines/{}\n",
             "URL:".cyan(),
-            pipeline.app_slug,
+            url_app_slug,
             pipeline.id
         ));
     }
@@ -548,9 +556,10 @@ mod tests {
         Pipeline {
             id: id.to_string(),
             app_slug: "test-app".to_string(),
+            app: None,
             status,
             status_text: Some("test".to_string()),
-            triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            triggered_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap()),
             started_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 1, 0).unwrap()),
             finished_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 10, 0).unwrap()),
             branch: "main".to_string(),
@@ -558,6 +567,7 @@ mod tests {
             triggered_by: Some("webhook".to_string()),
             abort_reason: None,
             workflows: vec![],
+            trigger_params: None,
         }
     }
 

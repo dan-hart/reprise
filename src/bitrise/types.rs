@@ -1,5 +1,35 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Custom deserializer for pipeline status that handles both int and string formats
+fn deserialize_pipeline_status<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StatusValue {
+        Int(i32),
+        Str(String),
+    }
+
+    match StatusValue::deserialize(deserializer)? {
+        StatusValue::Int(n) => Ok(n),
+        StatusValue::Str(s) => {
+            // Convert string status to integer
+            match s.to_lowercase().as_str() {
+                "running" | "on_hold" | "initializing" => Ok(0),
+                "succeeded" | "success" => Ok(1),
+                "failed" | "error" => Ok(2),
+                "aborted" | "cancelled" => Ok(3),
+                "aborted_with_success" => Ok(4),
+                _ => Err(D::Error::custom(format!("unknown status: {}", s))),
+            }
+        }
+    }
+}
 
 /// Response wrapper for app list
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,27 +267,82 @@ impl PipelineResponse {
 }
 
 /// Bitrise pipeline
+/// Handles both list response format and single pipeline response format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pipeline {
     #[serde(alias = "uuid", default)]
     pub id: String,
     #[serde(default)]
     pub app_slug: String,
+    /// App object (single pipeline response format)
+    #[serde(default)]
+    pub app: Option<PipelineApp>,
+    #[serde(default, deserialize_with = "deserialize_pipeline_status")]
     pub status: i32,
     #[serde(default)]
     pub status_text: Option<String>,
-    pub triggered_at: DateTime<Utc>,
+    #[serde(default)]
+    pub triggered_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub finished_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub branch: String,
-    /// The pipeline definition name/ID
-    #[serde(default)]
+    /// The pipeline definition name/ID (from list) or name (from single)
+    #[serde(default, alias = "name")]
     pub pipeline_id: String,
+    #[serde(default)]
     pub triggered_by: Option<String>,
+    #[serde(default)]
     pub abort_reason: Option<String>,
     #[serde(default)]
     pub workflows: Vec<PipelineWorkflow>,
+    /// Trigger parameters (single pipeline response)
+    #[serde(default)]
+    pub trigger_params: Option<PipelineTriggerParamsResponse>,
+}
+
+/// App reference in pipeline response
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineApp {
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// Trigger params in pipeline response (contains branch info)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineTriggerParamsResponse {
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub pipeline_id: Option<String>,
+}
+
+impl Pipeline {
+    /// Get the app slug, handling both response formats
+    pub fn get_app_slug(&self) -> &str {
+        if !self.app_slug.is_empty() {
+            &self.app_slug
+        } else if let Some(ref app) = self.app {
+            &app.slug
+        } else {
+            ""
+        }
+    }
+
+    /// Get the branch, handling both response formats
+    pub fn get_branch(&self) -> &str {
+        if !self.branch.is_empty() {
+            &self.branch
+        } else if let Some(ref params) = self.trigger_params {
+            params.branch.as_deref().unwrap_or("")
+        } else {
+            ""
+        }
+    }
 }
 
 impl Pipeline {
@@ -316,6 +401,7 @@ pub struct PipelineWorkflow {
     pub id: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default, deserialize_with = "deserialize_pipeline_status")]
     pub status: i32,
     #[serde(default)]
     pub status_text: Option<String>,
@@ -410,9 +496,10 @@ mod tests {
         Pipeline {
             id: "test-id".to_string(),
             app_slug: "test-app".to_string(),
+            app: None,
             status,
             status_text: Some("test".to_string()),
-            triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            triggered_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap()),
             started_at: started,
             finished_at: finished,
             branch: "main".to_string(),
@@ -420,6 +507,7 @@ mod tests {
             triggered_by: None,
             abort_reason: None,
             workflows: vec![],
+            trigger_params: None,
         }
     }
 

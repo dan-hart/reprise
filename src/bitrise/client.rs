@@ -372,7 +372,17 @@ impl BitriseClient {
 
     /// Get a specific pipeline
     pub fn get_pipeline(&self, app_slug: &str, pipeline_id: &str) -> Result<PipelineResponse> {
-        self.get(&format!("/apps/{app_slug}/pipelines/{pipeline_id}"))
+        // Get raw response to handle different API formats
+        let raw: serde_json::Value = self.get(&format!("/apps/{app_slug}/pipelines/{pipeline_id}"))?;
+
+        // Try to parse as wrapped format first, then as direct Pipeline
+        if raw.get("data").is_some() {
+            serde_json::from_value(raw).map_err(RepriseError::Json)
+        } else {
+            // Direct pipeline object - wrap it
+            let pipeline: Pipeline = serde_json::from_value(raw).map_err(RepriseError::Json)?;
+            Ok(PipelineResponse::Unwrapped(pipeline))
+        }
     }
 
     /// Trigger a new pipeline
