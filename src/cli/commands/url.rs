@@ -529,7 +529,7 @@ fn handle_pipeline_url(
 ) -> Result<String> {
     // Get pipeline details
     let response = client.get_pipeline(app_slug, pipeline_id)?;
-    let pipeline = response.data;
+    let pipeline = response.into_pipeline();
 
     // Handle watch mode
     if args.watch && pipeline.is_running() {
@@ -587,7 +587,7 @@ fn watch_pipeline(
 
         // Get pipeline status
         let response = client.get_pipeline(app_slug, pipeline_id)?;
-        let pipeline = response.data;
+        let pipeline = response.into_pipeline();
 
         // Print status update if changed
         if pipeline.status != last_status {

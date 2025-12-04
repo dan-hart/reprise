@@ -218,9 +218,22 @@ pub struct PipelineListResponse {
 }
 
 /// Response wrapper for single pipeline
+/// Handles both wrapped ({"data": ...}) and unwrapped responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineResponse {
-    pub data: Pipeline,
+#[serde(untagged)]
+pub enum PipelineResponse {
+    Wrapped { data: Pipeline },
+    Unwrapped(Pipeline),
+}
+
+impl PipelineResponse {
+    /// Get the pipeline data regardless of response format
+    pub fn into_pipeline(self) -> Pipeline {
+        match self {
+            PipelineResponse::Wrapped { data } => data,
+            PipelineResponse::Unwrapped(pipeline) => pipeline,
+        }
+    }
 }
 
 /// Bitrise pipeline

@@ -109,7 +109,7 @@ fn pipeline_show(
         .unwrap_or_else(|| config.require_default_app())?;
 
     let response = client.get_pipeline(app_slug, pipeline_id)?;
-    output::format_pipeline(&response.data, format)
+    output::format_pipeline(&response.into_pipeline(), format)
 }
 
 /// Trigger a new pipeline
@@ -355,7 +355,7 @@ fn wait_for_pipeline(
         thread::sleep(Duration::from_secs(interval_secs));
 
         let response = client.get_pipeline(app_slug, pipeline_id)?;
-        let pipeline = response.data;
+        let pipeline = response.into_pipeline();
 
         if !pipeline.is_running() {
             // Pipeline finished

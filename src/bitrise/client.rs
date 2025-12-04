@@ -417,7 +417,7 @@ impl BitriseClient {
         // Get the pipeline details to return full Pipeline object
         if let Some(ref id) = response.id {
             let pipeline_response = self.get_pipeline(app_slug, id)?;
-            Ok(pipeline_response.data)
+            Ok(pipeline_response.into_pipeline())
         } else {
             Err(RepriseError::Api {
                 status: 500,
@@ -469,11 +469,11 @@ impl BitriseClient {
         // Get the pipeline details to return full Pipeline object
         if let Some(ref id) = response.id {
             let pipeline_response = self.get_pipeline(app_slug, id)?;
-            Ok(pipeline_response.data)
+            Ok(pipeline_response.into_pipeline())
         } else {
             // If no new ID, fetch the original pipeline
             let pipeline_response = self.get_pipeline(app_slug, pipeline_id)?;
-            Ok(pipeline_response.data)
+            Ok(pipeline_response.into_pipeline())
         }
     }
 
@@ -839,7 +839,7 @@ mod tests {
         mock.assert();
         assert!(result.is_ok());
         let pipeline = result.unwrap();
-        assert_eq!(pipeline.data.id, "pipeline-id");
+        assert_eq!(pipeline.into_pipeline().id, "pipeline-id");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
