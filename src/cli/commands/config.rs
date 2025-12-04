@@ -1,10 +1,24 @@
 use std::io::{self, Write};
 
 use colored::Colorize;
+use rpassword::read_password;
 
 use crate::cli::args::{ConfigArgs, ConfigCommands, OutputFormat};
 use crate::config::{Config, Paths};
 use crate::error::{RepriseError, Result};
+
+/// Safely truncate a string to show first and last n characters
+/// Works correctly with multi-byte UTF-8 characters
+fn mask_token(token: &str, visible_chars: usize) -> String {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() > visible_chars * 2 {
+        let start: String = chars.iter().take(visible_chars).collect();
+        let end: String = chars.iter().rev().take(visible_chars).rev().collect();
+        format!("{}...{}", start, end)
+    } else {
+        "****".to_string()
+    }
+}
 
 /// Handle the config command
 pub fn config(
@@ -35,13 +49,7 @@ fn config_show(config: &Config, format: OutputFormat) -> Result<String> {
                 .api
                 .token
                 .as_ref()
-                .map(|t| {
-                    if t.len() > 8 {
-                        format!("{}...{}", &t[..4], &t[t.len() - 4..])
-                    } else {
-                        "****".to_string()
-                    }
-                })
+                .map(|t| mask_token(t, 4))
                 .unwrap_or_else(|| "(not set)".dimmed().to_string());
             output.push_str(&format!("  token = {}\n", token_display));
 
@@ -74,12 +82,7 @@ fn config_show(config: &Config, format: OutputFormat) -> Result<String> {
             // Don't expose the full token in JSON output either
             let mut safe_config = config.clone();
             if let Some(ref token) = safe_config.api.token {
-                if token.len() > 8 {
-                    safe_config.api.token =
-                        Some(format!("{}...{}", &token[..4], &token[token.len() - 4..]));
-                } else {
-                    safe_config.api.token = Some("****".to_string());
-                }
+                safe_config.api.token = Some(mask_token(token, 4));
             }
             Ok(serde_json::to_string_pretty(&safe_config)?)
         }
@@ -171,13 +174,15 @@ fn config_init(config: &mut Config, format: OutputFormat) -> Result<String> {
     println!("{}", "─".repeat(40));
     println!();
 
-    // Prompt for API token
+    // Prompt for API token with hidden input (secure)
     print!("Enter your Bitrise API token: ");
     io::stdout().flush()?;
 
-    let mut token = String::new();
-    io::stdin().read_line(&mut token)?;
+    let token = read_password().map_err(|e| {
+        RepriseError::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
+    })?;
     let token = token.trim().to_string();
+    println!(); // Add newline since read_password doesn't
 
     if token.is_empty() {
         return Err(RepriseError::InvalidArgument(

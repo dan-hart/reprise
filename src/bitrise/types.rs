@@ -147,3 +147,61 @@ pub struct Paging {
     pub page_item_limit: i64,
     pub next: Option<String>,
 }
+
+/// Parameters for triggering a build
+#[derive(Debug, Clone, Default)]
+pub struct TriggerParams {
+    pub branch: Option<String>,
+    pub workflow_id: String,
+    pub commit_message: Option<String>,
+    pub environments: Vec<(String, String)>,
+}
+
+/// Response from triggering a build
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerResponse {
+    pub status: String,
+    pub message: String,
+    pub slug: Option<String>,
+    pub build_slug: Option<String>,
+    pub build_number: Option<i64>,
+    pub build_url: Option<String>,
+    pub triggered_workflow: Option<String>,
+}
+
+/// Response wrapper for artifact list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactListResponse {
+    pub data: Vec<Artifact>,
+    pub paging: Paging,
+}
+
+/// Response wrapper for single artifact
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactResponse {
+    pub data: Artifact,
+}
+
+/// Build artifact
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Artifact {
+    pub title: String,
+    pub slug: String,
+    pub artifact_type: Option<String>,
+    pub file_size_bytes: Option<i64>,
+    pub is_public_page_enabled: bool,
+    pub expiring_download_url: Option<String>,
+    pub public_install_page_url: Option<String>,
+}
+
+impl Artifact {
+    /// Get human-readable file size
+    pub fn size_display(&self) -> String {
+        match self.file_size_bytes {
+            Some(bytes) if bytes < 1024 => format!("{} B", bytes),
+            Some(bytes) if bytes < 1024 * 1024 => format!("{:.1} KB", bytes as f64 / 1024.0),
+            Some(bytes) => format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)),
+            None => "-".to_string(),
+        }
+    }
+}

@@ -76,4 +76,43 @@ impl RepriseError {
     pub fn config_missing(message: impl Into<String>) -> Self {
         Self::ConfigMissing(message.into())
     }
+
+    /// Get the appropriate exit code for this error type.
+    ///
+    /// Uses standard exit codes where applicable:
+    /// - 1: General errors (network, parsing)
+    /// - 2: Usage/argument errors
+    /// - 78: Configuration errors (EX_CONFIG from sysexits.h)
+    /// - 69: Service unavailable (EX_UNAVAILABLE) for API errors
+    /// - 66: Not found errors (EX_NOINPUT)
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            // Configuration errors
+            Self::Config(_) | Self::ConfigMissing(_) | Self::NoDefaultApp => 78,
+
+            // Usage/argument errors
+            Self::InvalidArgument(_) => 2,
+
+            // Not found errors
+            Self::AppNotFound(_) | Self::BuildNotFound(_) | Self::LogNotAvailable(_) => 66,
+
+            // API/service unavailable errors
+            Self::Api { status, .. } => {
+                match *status {
+                    401 | 403 => 77, // EX_NOPERM - permission denied
+                    404 => 66,       // EX_NOINPUT - not found
+                    _ => 69,         // EX_UNAVAILABLE - service unavailable
+                }
+            }
+
+            // Network errors
+            Self::Http(_) => 69,
+
+            // IO errors
+            Self::Io(_) | Self::Env(_) => 74, // EX_IOERR
+
+            // Parsing errors
+            Self::Json(_) | Self::Toml(_) | Self::TomlSerialize(_) => 65, // EX_DATAERR
+        }
+    }
 }

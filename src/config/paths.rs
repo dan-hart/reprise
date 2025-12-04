@@ -1,4 +1,7 @@
+use std::fs;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use crate::error::Result;
 
@@ -9,6 +12,8 @@ pub struct Paths {
     pub root: PathBuf,
     /// Configuration file path (~/.reprise/config.toml)
     pub config_file: PathBuf,
+    /// Cache directory (~/.reprise/cache)
+    pub cache_dir: PathBuf,
 }
 
 impl Paths {
@@ -19,13 +24,24 @@ impl Paths {
 
         Ok(Self {
             config_file: root.join("config.toml"),
+            cache_dir: root.join("cache"),
             root,
         })
     }
 
-    /// Ensure the configuration directory exists
+    /// Ensure the configuration directory exists with proper permissions
     pub fn ensure_dirs(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.root)?;
+        fs::create_dir_all(&self.root)?;
+        fs::create_dir_all(&self.cache_dir)?;
+
+        // Set restrictive permissions on directories (700 = owner only)
+        #[cfg(unix)]
+        {
+            let perms = fs::Permissions::from_mode(0o700);
+            fs::set_permissions(&self.root, perms.clone())?;
+            fs::set_permissions(&self.cache_dir, perms)?;
+        }
+
         Ok(())
     }
 
@@ -40,6 +56,7 @@ impl Default for Paths {
         Self::new().unwrap_or_else(|_| Self {
             root: PathBuf::from(".reprise"),
             config_file: PathBuf::from(".reprise/config.toml"),
+            cache_dir: PathBuf::from(".reprise/cache"),
         })
     }
 }

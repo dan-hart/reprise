@@ -2,6 +2,24 @@ use colored::Colorize;
 
 use crate::bitrise::{App, Build};
 
+/// Safely truncate a string to n characters, appending "..." if truncated.
+/// Works correctly with multi-byte UTF-8 characters.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() > max_chars {
+        let truncated: String = chars.iter().take(max_chars.saturating_sub(3)).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Safely get first n characters of a string.
+/// Works correctly with multi-byte UTF-8 characters.
+fn first_n_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
 /// Format a list of apps for pretty output
 pub fn format_apps(apps: &[App]) -> String {
     if apps.is_empty() {
@@ -86,11 +104,7 @@ pub fn format_builds(builds: &[Build]) -> String {
             _ => "unknown".dimmed(),
         };
 
-        let branch_display = if build.branch.len() > 20 {
-            format!("{}...", &build.branch[..17])
-        } else {
-            build.branch.clone()
-        };
+        let branch_display = truncate_str(&build.branch, 20);
 
         output.push_str(&format!(
             "#{:<6} {:12} {:20} {:15} {}\n",
@@ -138,7 +152,7 @@ pub fn format_build(build: &Build) -> String {
     output.push_str(&format!("Duration: {}\n", build.duration_display()));
 
     if let Some(ref commit) = build.commit_hash {
-        output.push_str(&format!("Commit:   {}\n", &commit[..7.min(commit.len())]));
+        output.push_str(&format!("Commit:   {}\n", first_n_chars(commit, 7)));
     }
     if let Some(ref msg) = build.commit_message {
         let preview: String = msg.lines().next().unwrap_or("").chars().take(60).collect();

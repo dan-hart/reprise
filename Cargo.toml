@@ -3,7 +3,7 @@ name = "reprise"
 version = "0.1.0"
 edition = "2021"
 description = "A fast, feature-rich CLI for viewing build details from Bitrise"
-license = "MIT"
+license = "GPL-3.0-only"
 keywords = ["bitrise", "ci", "builds", "cli", "devops"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -31,6 +31,18 @@ thiserror = "2"
 
 # URL handling
 url = "2"
+
+# Desktop notifications
+notify-rust = "4"
+
+# Signal handling
+ctrlc = "3"
+
+# TTY detection (for NO_COLOR and pipe detection)
+is-terminal = "0.4"
+
+# Secure password input (for API token)
+rpassword = "7"
 
 [dev-dependencies]
 assert_cmd = "2"

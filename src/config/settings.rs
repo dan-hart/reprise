@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use super::paths::Paths;
 use crate::error::{RepriseError, Result};
@@ -84,7 +86,15 @@ impl Config {
     pub fn save_to(&self, paths: &Paths) -> Result<()> {
         paths.ensure_dirs()?;
         let contents = toml::to_string_pretty(self)?;
-        fs::write(&paths.config_file, contents)?;
+        fs::write(&paths.config_file, &contents)?;
+
+        // Set restrictive permissions on config file (contains API token)
+        #[cfg(unix)]
+        {
+            let perms = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&paths.config_file, perms)?;
+        }
+
         Ok(())
     }
 
