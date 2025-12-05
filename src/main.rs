@@ -24,7 +24,6 @@ fn main() {
 fn run() -> Result<(), RepriseError> {
     let cli = Cli::parse();
     let format = cli.output;
-    let use_cache = !cli.no_cache;
 
     // Load configuration
     let mut config = Config::load()?;
@@ -32,7 +31,6 @@ fn run() -> Result<(), RepriseError> {
     // Handle commands that don't need the API client
     let output = match &cli.command {
         Commands::Config(args) => commands::config(&mut config, args, format)?,
-        Commands::Cache(args) => commands::cache(args, format)?,
 
         // app show doesn't need API client
         Commands::App(args) if matches!(args.command, None | Some(AppCommands::Show)) => {
@@ -48,7 +46,7 @@ fn run() -> Result<(), RepriseError> {
             };
 
             match &cli.command {
-                Commands::Apps(args) => commands::apps(&client, args, format, use_cache)?,
+                Commands::Apps(args) => commands::apps(&client, args, format)?,
                 Commands::App(args) => commands::app_set(&client, &mut config, args, format)?,
                 Commands::Builds(args) => commands::builds(&client, &config, args, format)?,
                 Commands::Build(args) => commands::build(&client, &config, args, format)?,
@@ -59,7 +57,7 @@ fn run() -> Result<(), RepriseError> {
                 Commands::Url(args) => commands::url(&client, &mut config, args, format)?,
                 Commands::Pipelines(args) => commands::pipelines(&client, &config, args, format)?,
                 Commands::Pipeline(args) => commands::pipeline(&client, &config, args, format)?,
-                Commands::Config(_) | Commands::Cache(_) => unreachable!(),
+                Commands::Config(_) => unreachable!(),
             }
         }
     };

@@ -1,3 +1,4 @@
+use super::common::{get_github_username, matches_user, resolve_app_slug};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{BuildsArgs, OutputFormat};
 use crate::config::Config;
@@ -12,31 +13,39 @@ pub fn builds(
     format: OutputFormat,
 ) -> Result<String> {
     // Resolve app slug from args or config default
-    let app_slug = args
-        .app
-        .as_deref()
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
 
-    // Resolve triggered_by filter (--me uses API to get current user)
-    let triggered_by_filter = if args.me {
+    // Resolve triggered_by filter (--me uses API to get current user + GitHub username)
+    let me_filter: Option<(String, Option<String>)> = if args.me {
         let user = client.get_me().map_err(|e| {
             RepriseError::Config(format!(
                 "Cannot determine current user for --me flag: {}. Use --triggered-by <username> instead.",
                 e
             ))
         })?;
-        Some(user.data.username)
+        let github_username = get_github_username();
+
+        // Warn if GitHub username not configured (webhook-triggered builds won't match)
+        if github_username.is_none() && format != OutputFormat::Json {
+            eprintln!(
+                "hint: GitHub username not configured. Webhook-triggered builds may not be matched.\n\
+                 hint: Run: git config --global github.user YOUR_GITHUB_USERNAME\n"
+            );
+        }
+
+        Some((user.data.username, github_username))
     } else {
-        args.triggered_by.clone()
+        None
     };
+
+    let triggered_by_filter = args.triggered_by.clone();
 
     // Convert status filter to API code
     let status = args.status.map(|s| s.to_api_code());
 
     // Fetch extra builds when filtering client-side to ensure we have enough results
     // Cap at 50 (API maximum)
-    let fetch_limit = if triggered_by_filter.is_some() {
+    let fetch_limit = if me_filter.is_some() || triggered_by_filter.is_some() {
         args.limit.saturating_mul(4).min(50)
     } else {
         args.limit.min(50)
@@ -50,8 +59,22 @@ pub fn builds(
         fetch_limit,
     )?;
 
-    // Apply triggered_by filter client-side (case-insensitive partial match)
-    let builds: Vec<_> = if let Some(ref user) = triggered_by_filter {
+    // Apply triggered_by filter client-side
+    let builds: Vec<_> = if let Some((ref bitrise_username, ref github_username)) = me_filter {
+        // --me flag: match both Bitrise username and webhook-github/<github-username>
+        response
+            .data
+            .into_iter()
+            .filter(|b| {
+                b.triggered_by
+                    .as_ref()
+                    .map(|t| matches_user(t, bitrise_username, github_username.as_deref()))
+                    .unwrap_or(false)
+            })
+            .take(args.limit as usize)
+            .collect()
+    } else if let Some(ref user) = triggered_by_filter {
+        // --triggered-by flag: case-insensitive partial match (existing behavior)
         let user_lower = user.to_lowercase();
         response
             .data

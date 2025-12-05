@@ -1,11 +1,10 @@
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use colored::Colorize;
 
+use super::common::{is_interrupted, resolve_app_slug, setup_interrupt_handler};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{BuildArgs, OutputFormat};
 use crate::config::Config;
@@ -20,11 +19,7 @@ pub fn build(
     format: OutputFormat,
 ) -> Result<String> {
     // Resolve app slug from args or config default
-    let app_slug = args
-        .app
-        .as_deref()
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
 
     // Handle --follow: stream live log output
     if args.follow {
@@ -98,13 +93,7 @@ fn follow_log(
     let mut stdout = io::stdout();
 
     // Set up signal handler for graceful Ctrl+C handling
-    let interrupted = Arc::new(AtomicBool::new(false));
-    let interrupted_clone = Arc::clone(&interrupted);
-
-    ctrlc::set_handler(move || {
-        interrupted_clone.store(true, Ordering::SeqCst);
-    })
-    .ok(); // Ignore error if handler already set
+    let interrupted = setup_interrupt_handler();
 
     if format == OutputFormat::Pretty {
         eprintln!(
@@ -115,7 +104,7 @@ fn follow_log(
 
     loop {
         // Check for interrupt
-        if interrupted.load(Ordering::SeqCst) {
+        if is_interrupted(&interrupted) {
             if format == OutputFormat::Pretty {
                 eprintln!("\n{} Interrupted by user", "!".yellow());
             }

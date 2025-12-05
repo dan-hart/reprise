@@ -134,7 +134,6 @@ mod tests {
         let root = temp_dir.path().to_path_buf();
         Paths {
             config_file: root.join("config.toml"),
-            cache_dir: root.join("cache"),
             root,
         }
     }
@@ -201,7 +200,6 @@ mod tests {
         config.save_to(&paths).unwrap();
 
         assert!(paths.root.exists());
-        assert!(paths.cache_dir.exists());
         assert!(paths.config_file.exists());
     }
 

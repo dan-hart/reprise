@@ -77,32 +77,12 @@ fn test_config_help() {
 }
 
 #[test]
-fn test_cache_help() {
-    reprise()
-        .args(["cache", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Manage local cache"))
-        .stdout(predicate::str::contains("status"))
-        .stdout(predicate::str::contains("clear"));
-}
-
-#[test]
 fn test_config_path() {
     reprise()
         .args(["config", "path"])
         .assert()
         .success()
         .stdout(predicate::str::contains(".reprise/config.toml"));
-}
-
-#[test]
-fn test_cache_status() {
-    reprise()
-        .args(["cache", "status"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Cache Status"));
 }
 
 #[test]
@@ -459,25 +439,9 @@ fn test_json_output_format_config_show() {
         .success();
 }
 
-#[test]
-fn test_json_output_format_cache_status() {
-    reprise()
-        .args(["--output", "json", "cache", "status"])
-        .assert()
-        .success();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Flag Combination Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_no_cache_flag() {
-    reprise()
-        .args(["--no-cache", "config", "path"])
-        .assert()
-        .success();
-}
 
 #[test]
 fn test_quiet_mode() {

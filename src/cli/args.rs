@@ -15,8 +15,7 @@ Features:\n  \
 - Trigger builds and pipelines with custom parameters\n  \
 - Download build artifacts\n  \
 - Desktop notifications when builds complete\n  \
-- Parse Bitrise URLs directly for quick access\n  \
-- Local caching for faster repeated queries")]
+- Parse Bitrise URLs directly for quick access")]
 #[command(after_help = "\
 Quick Start:
   1. Set your token:  export BITRISE_TOKEN=your_token
@@ -50,10 +49,6 @@ pub struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     pub verbose: bool,
 
-    /// Bypass the local cache and fetch fresh data from Bitrise API
-    #[arg(long, global = true)]
-    pub no_cache: bool,
-
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -80,11 +75,7 @@ Examples:
   reprise apps --filter \"My App\"  Filter by partial name match
   reprise apps --limit 10         Show only first 10 apps
   reprise apps -o json            Output as JSON for scripting
-  reprise apps -o json | jq '.[0].slug'  Get first app's slug
-
-Caching:
-  App list is cached locally. Use --no-cache to fetch fresh data,
-  or 'reprise cache clear' to clear all cached data.")]
+  reprise apps -o json | jq '.[0].slug'  Get first app's slug")]
     Apps(AppsArgs),
 
     /// Show or set the default app
@@ -187,18 +178,6 @@ Configuration Keys:
 The config file is stored in your system's config directory.
 Use 'reprise config path' to see the exact location.")]
     Config(ConfigArgs),
-
-    /// Manage local cache
-    #[command(after_help = "\
-Examples:
-  reprise cache status            Show cache status and age
-  reprise cache clear             Clear all cached data
-
-What's Cached:
-  The app list is cached to speed up repeated queries.
-  Cache is stored in your system's cache directory.
-  Use --no-cache on any command to bypass the cache.")]
-    Cache(CacheArgs),
 
     /// Trigger a new build
     #[command(after_help = "\
@@ -400,7 +379,7 @@ pub struct BuildsArgs {
     #[arg(long, value_name = "USER")]
     pub triggered_by: Option<String>,
 
-    /// Show only builds triggered by the current authenticated user
+    /// Show only builds triggered by you (matches Bitrise user and webhook-github/<github-user>)
     #[arg(long, conflicts_with = "triggered_by")]
     pub me: bool,
 
@@ -564,43 +543,6 @@ This is the recommended way to get started with reprise.")]
     Init,
 }
 
-/// Arguments for the cache command
-#[derive(Args)]
-pub struct CacheArgs {
-    #[command(subcommand)]
-    pub command: CacheCommands,
-}
-
-/// Cache subcommands
-#[derive(Subcommand)]
-pub enum CacheCommands {
-    /// Show cache status and age
-    #[command(after_help = "\
-Example:
-  reprise cache status               Show cache info
-
-Displays:
-  - Cache location on disk
-  - Last update timestamp
-  - Number of cached items (apps)
-  - Cache size
-
-The cache stores your app list to speed up repeated commands.")]
-    Status,
-
-    /// Clear all cached data
-    #[command(after_help = "\
-Example:
-  reprise cache clear                Delete all cached data
-
-Removes all locally cached data. The cache will be rebuilt
-automatically on the next command that needs it.
-
-Use this if you're seeing stale data or after adding/removing
-apps in Bitrise.")]
-    Clear,
-}
-
 /// Arguments for the trigger command
 #[derive(Args)]
 pub struct TriggerArgs {
@@ -732,7 +674,7 @@ pub struct PipelinesArgs {
     #[arg(long, value_name = "USER")]
     pub triggered_by: Option<String>,
 
-    /// Show only pipelines triggered by the current authenticated user
+    /// Show only pipelines triggered by you (matches Bitrise user and webhook-github/<github-user>)
     #[arg(long, conflicts_with = "triggered_by")]
     pub me: bool,
 

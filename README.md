@@ -268,6 +268,86 @@ cargo fmt
 cargo clippy
 ```
 
+## Troubleshooting
+
+### Common Issues
+
+#### "API token not configured"
+
+You need to authenticate first. Choose one of these options:
+
+```bash
+# Set up persistent configuration
+reprise config init
+
+# Or use environment variable
+export BITRISE_TOKEN=your_token_here
+
+# Or provide token inline
+reprise --token your_token_here apps
+```
+
+#### "No default app configured"
+
+Set a default app to avoid specifying `--app` on every command:
+
+```bash
+# List your apps to find the slug
+reprise apps
+
+# Set the default
+reprise app set your-app-slug
+```
+
+#### `--me` flag not matching webhook-triggered builds
+
+The `--me` flag matches both your Bitrise username and GitHub webhook patterns (`webhook-github/<username>`). If webhook-triggered builds aren't showing up:
+
+```bash
+# Configure your GitHub username
+git config --global github.user YOUR_GITHUB_USERNAME
+```
+
+#### Permission denied errors (401/403)
+
+- Verify your API token is valid and not expired
+- Check that the token has the required permissions for the operation
+- Regenerate your token at [Bitrise Security Settings](https://app.bitrise.io/me/profile#/security)
+
+#### Rate limiting
+
+The Bitrise API has rate limits. If you're hitting limits:
+
+- Reduce polling frequency with `--interval` (default: 5 seconds)
+- Use `--limit` to fetch fewer results
+- Wait a few minutes before retrying
+
+### Exit Codes
+
+reprise uses standard Unix exit codes:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 2 | Usage/argument error |
+| 65 | Data parsing error |
+| 66 | Resource not found (app, build, etc.) |
+| 69 | Service unavailable / network error |
+| 74 | I/O error |
+| 77 | Permission denied |
+| 78 | Configuration error |
+
+### Getting Help
+
+```bash
+# General help
+reprise --help
+
+# Command-specific help
+reprise builds --help
+reprise pipeline --help
+```
+
 ## Security
 
 - API tokens are stored in `~/.reprise/config.toml` (outside any repository)

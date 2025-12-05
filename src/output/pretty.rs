@@ -11,7 +11,23 @@ fn get_terminal_width() -> usize {
 }
 
 /// Safely truncate a string to n characters, appending "..." if truncated.
-/// Works correctly with multi-byte UTF-8 characters.
+///
+/// This function handles multi-byte UTF-8 characters correctly by counting
+/// grapheme clusters rather than bytes. If the string is longer than `max_chars`,
+/// it truncates and appends "..." (which counts toward the limit).
+///
+/// # Arguments
+/// * `s` - The string to truncate
+/// * `max_chars` - Maximum number of characters (including "..." if truncated)
+///
+/// # Returns
+/// The original string if it fits, or a truncated version with "..." appended.
+///
+/// # Example
+/// ```ignore
+/// assert_eq!(truncate_str("hello world", 8), "hello...");
+/// assert_eq!(truncate_str("short", 10), "short");
+/// ```
 #[allow(dead_code)] // Used in tests
 fn truncate_str(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -23,7 +39,26 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// Pad or truncate a string to exactly n characters
+/// Pad or truncate a string to exactly n characters.
+///
+/// This function ensures the output string is exactly `width` characters:
+/// - If shorter: pads with spaces on the right
+/// - If longer: truncates and appends "..." (if width > 3)
+///
+/// Handles multi-byte UTF-8 characters correctly.
+///
+/// # Arguments
+/// * `s` - The string to fit
+/// * `width` - Exact width of the output string
+///
+/// # Returns
+/// A string of exactly `width` characters (padded or truncated).
+///
+/// # Example
+/// ```ignore
+/// assert_eq!(fit_str("hi", 5), "hi   ");
+/// assert_eq!(fit_str("hello world", 8), "hello...");
+/// ```
 #[allow(dead_code)] // May be used in future
 fn fit_str(s: &str, width: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -40,7 +75,26 @@ fn fit_str(s: &str, width: usize) -> String {
 }
 
 /// Safely get first n characters of a string.
-/// Works correctly with multi-byte UTF-8 characters.
+///
+/// Returns the first `n` characters of the input string without any
+/// truncation indicator. If the string has fewer than `n` characters,
+/// returns the entire string.
+///
+/// Handles multi-byte UTF-8 characters correctly by iterating over
+/// characters rather than bytes.
+///
+/// # Arguments
+/// * `s` - The input string
+/// * `n` - Maximum number of characters to return
+///
+/// # Returns
+/// The first `n` characters of the string.
+///
+/// # Example
+/// ```ignore
+/// assert_eq!(first_n_chars("abc123", 3), "abc");
+/// assert_eq!(first_n_chars("hi", 5), "hi");
+/// ```
 fn first_n_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }

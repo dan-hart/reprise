@@ -1,12 +1,11 @@
 //! Trigger build command
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use colored::Colorize;
 
+use super::common::{is_interrupted, setup_interrupt_handler};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{OutputFormat, TriggerArgs};
 use crate::config::Config;
@@ -81,13 +80,7 @@ fn wait_for_build(
     format: OutputFormat,
 ) -> Result<String> {
     // Set up signal handler for graceful Ctrl+C handling
-    let interrupted = Arc::new(AtomicBool::new(false));
-    let interrupted_clone = Arc::clone(&interrupted);
-
-    ctrlc::set_handler(move || {
-        interrupted_clone.store(true, Ordering::SeqCst);
-    })
-    .ok(); // Ignore error if handler already set
+    let interrupted = setup_interrupt_handler();
 
     if format == OutputFormat::Pretty {
         eprintln!("\n{} Waiting for build to complete (Ctrl+C to stop)...", "->".cyan());
@@ -95,7 +88,7 @@ fn wait_for_build(
 
     loop {
         // Check for interrupt
-        if interrupted.load(Ordering::SeqCst) {
+        if is_interrupted(&interrupted) {
             if format == OutputFormat::Pretty {
                 eprintln!("\n{} Interrupted - build continues in background", "!".yellow());
                 eprintln!("  View at: https://app.bitrise.io/build/{}", build_slug);
