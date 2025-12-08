@@ -41,6 +41,21 @@ cargo install reprise
 
 Download the latest binary for your platform from [GitHub Releases](https://github.com/dan-hart/reprise/releases).
 
+### Switching from Cargo to Homebrew
+
+If you previously installed via Cargo and want to switch to Homebrew:
+
+```bash
+# Install via Homebrew
+brew install dan-hart/tap/reprise
+
+# Verify Homebrew version is active
+which reprise  # Should show /opt/homebrew/bin/reprise
+
+# Remove the Cargo version
+cargo uninstall reprise
+```
+
 ## Quick Start
 
 ### 1. Authenticate
