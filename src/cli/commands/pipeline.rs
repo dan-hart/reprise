@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use crate::bitrise::{BitriseClient, PipelineTriggerParams};
+use crate::bitrise::{BitriseClient, Pipeline, PipelineTriggerParams};
 use crate::cli::args::{OutputFormat, PipelineArgs, PipelineCommands};
 use crate::config::Config;
 use crate::error::{RepriseError, Result};
@@ -312,6 +312,34 @@ fn pipeline_watch(
     )
 }
 
+/// Fetch pipeline with retry logic for transient server errors
+fn get_pipeline_with_retry(
+    client: &BitriseClient,
+    app_slug: &str,
+    pipeline_id: &str,
+    max_retries: u32,
+) -> Result<Pipeline> {
+    let mut attempt = 0;
+    loop {
+        match client.get_pipeline(app_slug, pipeline_id) {
+            Ok(response) => return Ok(response.into_pipeline()),
+            Err(e) => {
+                // Only retry on 5xx server errors
+                let should_retry =
+                    matches!(&e, RepriseError::Api { status, .. } if *status >= 500);
+
+                if should_retry && attempt < max_retries {
+                    attempt += 1;
+                    let backoff = Duration::from_secs(1 << (attempt - 1)); // 1, 2, 4, 8, 16s
+                    thread::sleep(backoff);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
 /// Wait for a pipeline to complete
 fn wait_for_pipeline(
     client: &BitriseClient,
@@ -355,8 +383,7 @@ fn wait_for_pipeline(
 
         thread::sleep(Duration::from_secs(interval_secs));
 
-        let response = client.get_pipeline(app_slug, pipeline_id)?;
-        let pipeline = response.into_pipeline();
+        let pipeline = get_pipeline_with_retry(client, app_slug, pipeline_id, 5)?;
 
         if !pipeline.is_running() {
             // Pipeline finished

@@ -20,7 +20,7 @@ where
         StatusValue::Str(s) => {
             // Convert string status to integer
             match s.to_lowercase().as_str() {
-                "running" | "on_hold" | "initializing" => Ok(0),
+                "running" | "on_hold" | "initializing" | "waiting_to_be_triggered" => Ok(0),
                 "succeeded" | "success" => Ok(1),
                 "failed" | "error" => Ok(2),
                 "aborted" | "cancelled" => Ok(3),
