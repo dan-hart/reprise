@@ -3,7 +3,7 @@ use colored::{control::set_override, Colorize};
 use is_terminal::IsTerminal;
 
 use reprise::bitrise::BitriseClient;
-use reprise::cli::args::{AppCommands, Cli, Commands};
+use reprise::cli::args::{AppCommands, Cli, Commands, CompletionsArgs};
 use reprise::cli::commands;
 use reprise::config::Config;
 use reprise::error::RepriseError;
@@ -25,11 +25,18 @@ fn run() -> Result<(), RepriseError> {
     let cli = Cli::parse();
     let format = cli.output;
 
+    // Handle completions command early (no config or client needed)
+    if let Commands::Completions(CompletionsArgs { shell }) = &cli.command {
+        Cli::print_completions(*shell);
+        return Ok(());
+    }
+
     // Load configuration
     let mut config = Config::load()?;
 
     // Handle commands that don't need the API client
     let output = match &cli.command {
+        Commands::Completions(_) => unreachable!(), // Handled above
         Commands::Config(args) => commands::config(&mut config, args, format)?,
 
         // app show doesn't need API client
@@ -57,7 +64,7 @@ fn run() -> Result<(), RepriseError> {
                 Commands::Url(args) => commands::url(&client, &mut config, args, format)?,
                 Commands::Pipelines(args) => commands::pipelines(&client, &config, args, format)?,
                 Commands::Pipeline(args) => commands::pipeline(&client, &config, args, format)?,
-                Commands::Config(_) => unreachable!(),
+                Commands::Config(_) | Commands::Completions(_) => unreachable!(),
             }
         }
     };

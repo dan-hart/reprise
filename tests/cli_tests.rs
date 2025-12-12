@@ -511,3 +511,122 @@ fn test_builds_me_filter() {
         .assert()
         .success();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New Feature Tests (v0.1.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_completions_help() {
+    reprise()
+        .args(["completions", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("shell completions"))
+        .stdout(predicate::str::contains("bash"))
+        .stdout(predicate::str::contains("zsh"))
+        .stdout(predicate::str::contains("fish"));
+}
+
+#[test]
+fn test_completions_bash() {
+    reprise()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_reprise"));
+}
+
+#[test]
+fn test_completions_zsh() {
+    reprise()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#compdef"));
+}
+
+#[test]
+fn test_completions_fish() {
+    reprise()
+        .args(["completions", "fish"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("complete"));
+}
+
+#[test]
+fn test_url_generate_build() {
+    reprise()
+        .args(["url", "--build", "abc123"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("https://app.bitrise.io/build/abc123"));
+}
+
+#[test]
+fn test_url_generate_app() {
+    reprise()
+        .args(["url", "--app", "xyz789"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("https://app.bitrise.io/app/xyz789"));
+}
+
+#[test]
+fn test_url_generate_pipeline_requires_app_slug() {
+    reprise()
+        .args(["url", "--pipeline", "p123"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--app-slug"));
+}
+
+#[test]
+fn test_url_generate_pipeline() {
+    reprise()
+        .args(["url", "--pipeline", "p123", "--app-slug", "myapp"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("https://app.bitrise.io/app/myapp/pipelines/p123"));
+}
+
+#[test]
+fn test_builds_since_option() {
+    reprise()
+        .args(["builds", "--since", "1h", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_builds_workflow_contains_option() {
+    reprise()
+        .args(["builds", "--workflow-contains", "test", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_builds_watch_option() {
+    reprise()
+        .args(["builds", "--watch", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_builds_watch_with_interval() {
+    reprise()
+        .args(["builds", "--watch", "--interval", "5", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_pipelines_since_option() {
+    reprise()
+        .args(["pipelines", "--since", "today", "--help"])
+        .assert()
+        .success();
+}

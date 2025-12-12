@@ -22,8 +22,42 @@ pub fn url(
     args: &UrlArgs,
     format: OutputFormat,
 ) -> Result<String> {
-    // Parse the URL
-    let parsed = parse_bitrise_url(&args.url)?;
+    // Handle URL generation mode (--build, --app, or --pipeline flags)
+    if let Some(ref build_slug) = args.gen_build {
+        return handle_url_generation(
+            BitriseUrl::Build { slug: build_slug.clone() },
+            args,
+            format,
+        );
+    }
+    if let Some(ref app_slug) = args.gen_app {
+        return handle_url_generation(
+            BitriseUrl::App { slug: app_slug.clone() },
+            args,
+            format,
+        );
+    }
+    if let Some(ref pipeline_id) = args.gen_pipeline {
+        let app_slug = args.app_slug_for_pipeline.as_ref()
+            .ok_or_else(|| RepriseError::InvalidArgument(
+                "--app-slug is required when generating pipeline URLs".to_string()
+            ))?;
+        return handle_url_generation(
+            BitriseUrl::Pipeline {
+                app_slug: app_slug.clone(),
+                pipeline_id: pipeline_id.clone()
+            },
+            args,
+            format,
+        );
+    }
+
+    // Parse the URL (required when not in generation mode)
+    let url_str = args.url.as_ref()
+        .ok_or_else(|| RepriseError::InvalidArgument(
+            "Either a URL or one of --build, --app, --pipeline is required".to_string()
+        ))?;
+    let parsed = parse_bitrise_url(url_str)?;
 
     // Validate flags for URL type
     validate_flags_for_url_type(&parsed, args)?;
@@ -46,6 +80,50 @@ pub fn url(
         }
         BitriseUrl::Pipeline { app_slug, pipeline_id } => {
             handle_pipeline_url(client, &app_slug, &pipeline_id, args, format)
+        }
+    }
+}
+
+/// Handle URL generation mode (--build, --app, --pipeline)
+fn handle_url_generation(
+    parsed: BitriseUrl,
+    args: &UrlArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    let url = parsed.to_url();
+
+    // Open in browser if requested
+    if args.browser {
+        open_url_in_browser(&url)?;
+        if format == OutputFormat::Pretty {
+            return Ok(format!("{} Opened in browser: {}", "->".cyan(), url));
+        }
+        return Ok(String::new());
+    }
+
+    // Just output the URL
+    match format {
+        OutputFormat::Pretty => Ok(url),
+        OutputFormat::Json => {
+            let json = match &parsed {
+                BitriseUrl::Build { slug } => serde_json::json!({
+                    "type": "build",
+                    "slug": slug,
+                    "url": url
+                }),
+                BitriseUrl::App { slug } => serde_json::json!({
+                    "type": "app",
+                    "slug": slug,
+                    "url": url
+                }),
+                BitriseUrl::Pipeline { app_slug, pipeline_id } => serde_json::json!({
+                    "type": "pipeline",
+                    "app_slug": app_slug,
+                    "pipeline_id": pipeline_id,
+                    "url": url
+                }),
+            };
+            Ok(serde_json::to_string_pretty(&json)?)
         }
     }
 }
@@ -139,7 +217,9 @@ fn handle_build_url(
 
     // Add URL to output in pretty mode
     if format == OutputFormat::Pretty {
-        output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), args.url));
+        if let Some(ref url) = args.url {
+            output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), url));
+        }
     }
 
     Ok(output)
@@ -513,7 +593,9 @@ fn handle_app_url(
 
     // Add URL to output in pretty mode
     if format == OutputFormat::Pretty && !args.browser {
-        output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), args.url));
+        if let Some(ref url) = args.url {
+            output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), url));
+        }
     }
 
     Ok(output)
@@ -541,7 +623,9 @@ fn handle_pipeline_url(
 
     // Add URL to output in pretty mode
     if format == OutputFormat::Pretty && !args.browser {
-        output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), args.url));
+        if let Some(ref url) = args.url {
+            output.push_str(&format!("\n{} {}\n", "URL:".dimmed(), url));
+        }
     }
 
     Ok(output)

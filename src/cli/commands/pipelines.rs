@@ -4,6 +4,7 @@ use super::common::{get_github_username, matches_user, resolve_app_slug};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{OutputFormat, PipelinesArgs};
 use crate::config::Config;
+use crate::duration::parse_since;
 use crate::error::{RepriseError, Result};
 use crate::output;
 
@@ -62,6 +63,13 @@ pub fn pipelines(
         fetch_limit,
     )?;
 
+    // Parse --since threshold if provided
+    let since_threshold = args
+        .since
+        .as_ref()
+        .map(|s| parse_since(s))
+        .transpose()?;
+
     // Apply filters client-side
     let pipelines: Vec<_> = response
         .data
@@ -96,6 +104,17 @@ pub fn pipelines(
                     .unwrap_or(false)
                 {
                     return false;
+                }
+            }
+
+            // Filter by --since threshold
+            if let Some(threshold) = since_threshold {
+                if let Some(triggered_at) = p.triggered_at {
+                    if triggered_at < threshold {
+                        return false;
+                    }
+                } else {
+                    return false; // No triggered_at, exclude
                 }
             }
 

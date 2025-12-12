@@ -1,4 +1,5 @@
-use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::Shell;
 use serde::{Deserialize, Serialize};
 
 /// A fast, feature-rich CLI for interacting with Bitrise CI/CD
@@ -231,14 +232,20 @@ Confirmation:
   The abort reason is optional but helps with debugging.")]
     Abort(AbortArgs),
 
-    /// Parse and interact with a Bitrise URL
+    /// Parse a Bitrise URL or generate URLs from slugs
     #[command(after_help = "\
-Examples:
+Parse URL Examples:
   reprise url https://app.bitrise.io/build/abc123           Show build status
   reprise url https://app.bitrise.io/app/xyz789             Show app info
   reprise url https://app.bitrise.io/app/xyz/pipelines/123  Show pipeline status
   reprise url <url> --browser                                Open URL in browser
   reprise url <url> --watch                                  Watch build/pipeline progress
+
+Generate URL Examples:
+  reprise url --build abc123                  Generate build URL
+  reprise url --app xyz789                    Generate app URL
+  reprise url --pipeline p123 --app-slug xyz  Generate pipeline URL
+  reprise url --build abc123 --browser        Generate and open in browser
 
 Build URL Actions:
   reprise url <build-url> --logs         Dump the full build log
@@ -302,6 +309,21 @@ Subcommands:
 
 Use 'reprise pipeline <subcommand> --help' for subcommand details.")]
     Pipeline(PipelineArgs),
+
+    /// Generate shell completions
+    #[command(after_help = "\
+Examples:
+  reprise completions bash > ~/.bash_completion.d/reprise
+  reprise completions zsh > ~/.zsh/completions/_reprise
+  reprise completions fish > ~/.config/fish/completions/reprise.fish
+  reprise completions powershell > reprise.ps1
+
+Installation:
+  Bash:   Source the file in your .bashrc
+  Zsh:    Place in a directory in your $fpath, then run 'compinit'
+  Fish:   Place in ~/.config/fish/completions/
+  PowerShell: Add 'Import-Module ./reprise.ps1' to your profile")]
+    Completions(CompletionsArgs),
 }
 
 /// Arguments for the apps command
@@ -375,6 +397,10 @@ pub struct BuildsArgs {
     #[arg(short, long)]
     pub workflow: Option<String>,
 
+    /// Filter by workflow name (substring match, case-insensitive)
+    #[arg(long, value_name = "TEXT", conflicts_with = "workflow")]
+    pub workflow_contains: Option<String>,
+
     /// Filter by user who triggered (partial match, case-insensitive)
     #[arg(long, value_name = "USER")]
     pub triggered_by: Option<String>,
@@ -383,9 +409,21 @@ pub struct BuildsArgs {
     #[arg(long, conflicts_with = "triggered_by")]
     pub me: bool,
 
+    /// Show builds since a time (e.g., 1h, 30m, 2d, 1w, today, yesterday, this-week, 2025-01-15)
+    #[arg(long, value_name = "DURATION")]
+    pub since: Option<String>,
+
     /// Maximum number of builds to return
     #[arg(short, long, default_value = "25", value_name = "N")]
     pub limit: u32,
+
+    /// Watch mode - continuously refresh the build list
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Refresh interval in seconds for watch mode (default: 10)
+    #[arg(long, default_value = "10", value_name = "SECS", requires = "watch")]
+    pub interval: u64,
 }
 
 /// Build status filter options
@@ -619,8 +657,24 @@ pub struct AbortArgs {
 #[derive(Args)]
 pub struct UrlArgs {
     /// Bitrise URL to parse (app, build, or pipeline URL)
-    #[arg(value_hint = ValueHint::Url)]
-    pub url: String,
+    #[arg(value_hint = ValueHint::Url, required_unless_present_any = ["gen_build", "gen_app", "gen_pipeline"])]
+    pub url: Option<String>,
+
+    /// Generate URL for a build slug (instead of parsing a URL)
+    #[arg(long = "build", value_name = "SLUG", conflicts_with_all = ["url", "gen_app", "gen_pipeline"])]
+    pub gen_build: Option<String>,
+
+    /// Generate URL for an app slug (instead of parsing a URL)
+    #[arg(long = "app", value_name = "SLUG", conflicts_with_all = ["url", "gen_build", "gen_pipeline"])]
+    pub gen_app: Option<String>,
+
+    /// Generate URL for a pipeline (requires --app-slug for the app context)
+    #[arg(long = "pipeline", value_name = "ID", conflicts_with_all = ["url", "gen_build", "gen_app"], requires = "app_slug_for_pipeline")]
+    pub gen_pipeline: Option<String>,
+
+    /// App slug for pipeline URL generation (required with --pipeline)
+    #[arg(long = "app-slug", value_name = "SLUG")]
+    pub app_slug_for_pipeline: Option<String>,
 
     /// Open URL in default browser
     #[arg(short, long)]
@@ -677,6 +731,10 @@ pub struct PipelinesArgs {
     /// Show only pipelines triggered by you (matches Bitrise user and webhook-github/<github-user>)
     #[arg(long, conflicts_with = "triggered_by")]
     pub me: bool,
+
+    /// Show pipelines since a time (e.g., 1h, 30m, 2d, 1w, today, yesterday, this-week, 2025-01-15)
+    #[arg(long, value_name = "DURATION")]
+    pub since: Option<String>,
 
     /// Maximum number of pipelines to return
     #[arg(short, long, default_value = "25", value_name = "N")]
@@ -858,6 +916,26 @@ pipeline completes (success, failure, or abort).")]
         #[arg(short, long)]
         notify: bool,
     },
+}
+
+/// Arguments for the completions command
+#[derive(Args)]
+pub struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
+    pub shell: Shell,
+}
+
+impl Cli {
+    /// Generate shell completions to stdout
+    pub fn print_completions(shell: Shell) {
+        clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            "reprise",
+            &mut std::io::stdout(),
+        );
+    }
 }
 
 /// Parse environment variable in KEY=VALUE format
