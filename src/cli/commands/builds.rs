@@ -179,12 +179,12 @@ fn fetch_and_format_builds(
                     .unwrap_or(false)
             })
             .filter(|b| {
-                workflow_contains_lower.as_ref().map_or(true, |pattern| {
+                workflow_contains_lower.as_ref().is_none_or(|pattern| {
                     b.triggered_workflow.to_lowercase().contains(pattern)
                 })
             })
             .filter(|b| {
-                since_threshold.map_or(true, |threshold| b.triggered_at >= threshold)
+                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
             })
             .take(args.limit as usize)
             .collect()
@@ -201,24 +201,24 @@ fn fetch_and_format_builds(
                     .unwrap_or(false)
             })
             .filter(|b| {
-                workflow_contains_lower.as_ref().map_or(true, |pattern| {
+                workflow_contains_lower.as_ref().is_none_or(|pattern| {
                     b.triggered_workflow.to_lowercase().contains(pattern)
                 })
             })
             .filter(|b| {
-                since_threshold.map_or(true, |threshold| b.triggered_at >= threshold)
+                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
             })
             .take(args.limit as usize)
             .collect()
     } else {
         response.data.into_iter()
             .filter(|b| {
-                workflow_contains_lower.as_ref().map_or(true, |pattern| {
+                workflow_contains_lower.as_ref().is_none_or(|pattern| {
                     b.triggered_workflow.to_lowercase().contains(pattern)
                 })
             })
             .filter(|b| {
-                since_threshold.map_or(true, |threshold| b.triggered_at >= threshold)
+                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
             })
             .take(args.limit as usize)
             .collect()
