@@ -15,14 +15,13 @@ use crate::config::Config;
 use crate::error::{RepriseError, Result};
 use crate::output;
 
-/// Handle the url command
-pub fn url(
-    client: &BitriseClient,
-    config: &mut Config,
-    args: &UrlArgs,
-    format: OutputFormat,
-) -> Result<String> {
-    // Handle URL generation mode (--build, --app, or --pipeline flags)
+/// Check if the URL args are in generation mode (--build, --app, or --pipeline)
+pub fn is_generation_mode(args: &UrlArgs) -> bool {
+    args.gen_build.is_some() || args.gen_app.is_some() || args.gen_pipeline.is_some()
+}
+
+/// Handle URL generation without an API client (for --build, --app, --pipeline flags)
+pub fn url_generate(args: &UrlArgs, format: OutputFormat) -> Result<String> {
     if let Some(ref build_slug) = args.gen_build {
         return handle_url_generation(
             BitriseUrl::Build { slug: build_slug.clone() },
@@ -50,6 +49,24 @@ pub fn url(
             args,
             format,
         );
+    }
+
+    Err(RepriseError::InvalidArgument(
+        "url_generate called without generation flags".to_string()
+    ))
+}
+
+/// Handle the url command
+pub fn url(
+    client: &BitriseClient,
+    config: &mut Config,
+    args: &UrlArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    // Handle URL generation mode (--build, --app, or --pipeline flags)
+    // Note: This is also handled early in main.rs, but keeping it here for completeness
+    if is_generation_mode(args) {
+        return url_generate(args, format);
     }
 
     // Parse the URL (required when not in generation mode)

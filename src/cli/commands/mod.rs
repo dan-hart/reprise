@@ -23,4 +23,4 @@ pub use self::log::log;
 pub use self::pipeline::pipeline;
 pub use self::pipelines::pipelines;
 pub use self::trigger::trigger;
-pub use self::url::url;
+pub use self::url::{is_generation_mode, url, url_generate};

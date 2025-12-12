@@ -31,6 +31,17 @@ fn run() -> Result<(), RepriseError> {
         return Ok(());
     }
 
+    // Handle URL generation early (no config or client needed)
+    if let Commands::Url(args) = &cli.command {
+        if commands::is_generation_mode(args) {
+            let output = commands::url_generate(args, format)?;
+            if !output.is_empty() {
+                println!("{output}");
+            }
+            return Ok(());
+        }
+    }
+
     // Load configuration
     let mut config = Config::load()?;
 
