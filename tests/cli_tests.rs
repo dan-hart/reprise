@@ -630,3 +630,121 @@ fn test_pipelines_since_option() {
         .assert()
         .success();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v0.1.8 Feature Tests: App Aliases, PR Filter, Artifact Filter, URL Actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_config_alias_help() {
+    reprise()
+        .args(["config", "alias", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alias"))
+        .stdout(predicate::str::contains("--remove"));
+}
+
+#[test]
+fn test_config_alias_subcommand_exists() {
+    // Config alias without args should list aliases (or show empty message)
+    reprise()
+        .args(["config", "alias"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_builds_pr_filter_option() {
+    reprise()
+        .args(["builds", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--pr"));
+}
+
+#[test]
+fn test_builds_pr_filter_accepts_number() {
+    // Just check the help includes the option
+    reprise()
+        .args(["builds", "--pr", "1234", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_artifacts_filter_option() {
+    reprise()
+        .args(["artifacts", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--filter"))
+        .stdout(predicate::str::contains("--exclude"));
+}
+
+#[test]
+fn test_artifacts_filter_short_flag() {
+    // -f is short for --filter
+    reprise()
+        .args(["artifacts", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-f"));
+}
+
+#[test]
+fn test_url_abort_option() {
+    reprise()
+        .args(["url", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--abort"));
+}
+
+#[test]
+fn test_url_retry_option() {
+    reprise()
+        .args(["url", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--retry"));
+}
+
+#[test]
+fn test_url_download_option() {
+    reprise()
+        .args(["url", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--download"));
+}
+
+#[test]
+fn test_url_abort_reason_requires_abort() {
+    // --reason requires --abort
+    reprise()
+        .args(["url", "--reason", "test", "https://example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("abort"));
+}
+
+#[test]
+fn test_url_yes_requires_abort() {
+    // -y/--yes requires --abort
+    reprise()
+        .args(["url", "-y", "https://example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("abort"));
+}
+
+#[test]
+fn test_url_retry_wait_requires_retry() {
+    // --wait requires --retry
+    reprise()
+        .args(["url", "--wait", "https://example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("retry"));
+}

@@ -31,6 +31,9 @@ pub fn config(
         ConfigCommands::Set { key, value } => config_set(config, key, value, format),
         ConfigCommands::Path => config_path(format),
         ConfigCommands::Init => config_init(config, format),
+        ConfigCommands::Alias { name, slug, remove } => {
+            config_alias(config, name.as_deref(), slug.as_deref(), *remove, format)
+        }
     }
 }
 
@@ -75,6 +78,16 @@ fn config_show(config: &Config, format: OutputFormat) -> Result<String> {
             // Output section
             output.push_str(&format!("\n{}\n", "[output]".cyan()));
             output.push_str(&format!("  format = {}\n", config.output.format));
+
+            // Aliases section (if any exist)
+            if !config.aliases.is_empty() {
+                output.push_str(&format!("\n{}\n", "[aliases]".cyan()));
+                let mut aliases: Vec<_> = config.aliases.iter().collect();
+                aliases.sort_by_key(|(k, _)| *k);
+                for (name, slug) in aliases {
+                    output.push_str(&format!("  {} = {}\n", name, slug.dimmed()));
+                }
+            }
 
             Ok(output)
         }
@@ -201,4 +214,140 @@ fn config_init(config: &mut Config, format: OutputFormat) -> Result<String> {
         paths.config_file.display(),
         "reprise apps".cyan()
     ))
+}
+
+/// Handle alias operations: list, show, set, or remove
+fn config_alias(
+    config: &mut Config,
+    name: Option<&str>,
+    slug: Option<&str>,
+    remove: bool,
+    format: OutputFormat,
+) -> Result<String> {
+    match (name, slug, remove) {
+        // List all aliases
+        (None, None, false) => {
+            if config.aliases.is_empty() {
+                return match format {
+                    OutputFormat::Pretty => Ok("No aliases configured.\n\nSet one with: reprise config alias <name> <slug>".dimmed().to_string()),
+                    OutputFormat::Json => Ok(serde_json::to_string_pretty(&config.aliases)?),
+                };
+            }
+
+            match format {
+                OutputFormat::Pretty => {
+                    let mut output = String::new();
+                    output.push_str(&format!("{}\n", "App Aliases".bold()));
+                    output.push_str(&"─".repeat(50));
+                    output.push('\n');
+
+                    let mut aliases: Vec<_> = config.aliases.iter().collect();
+                    aliases.sort_by_key(|(k, _)| *k);
+                    for (alias_name, alias_slug) in aliases {
+                        output.push_str(&format!(
+                            "  {} {} {}\n",
+                            alias_name.cyan(),
+                            "→".dimmed(),
+                            alias_slug
+                        ));
+                    }
+                    Ok(output)
+                }
+                OutputFormat::Json => Ok(serde_json::to_string_pretty(&config.aliases)?),
+            }
+        }
+
+        // Show specific alias
+        (Some(alias_name), None, false) => {
+            match config.get_alias(alias_name) {
+                Some(alias_slug) => match format {
+                    OutputFormat::Pretty => Ok(format!(
+                        "{} {} {}",
+                        alias_name.cyan(),
+                        "→".dimmed(),
+                        alias_slug
+                    )),
+                    OutputFormat::Json => {
+                        let result = serde_json::json!({
+                            "name": alias_name,
+                            "slug": alias_slug
+                        });
+                        Ok(serde_json::to_string_pretty(&result)?)
+                    }
+                },
+                None => Err(RepriseError::Config(format!(
+                    "Alias '{}' not found. Use 'reprise config alias' to list all aliases.",
+                    alias_name
+                ))),
+            }
+        }
+
+        // Remove alias
+        (Some(alias_name), None, true) | (Some(alias_name), Some(_), true) => {
+            match config.remove_alias(alias_name) {
+                Some(old_slug) => {
+                    config.save()?;
+                    match format {
+                        OutputFormat::Pretty => Ok(format!(
+                            "{} Removed alias '{}' (was: {})",
+                            "✓".green(),
+                            alias_name,
+                            old_slug.dimmed()
+                        )),
+                        OutputFormat::Json => {
+                            let result = serde_json::json!({
+                                "action": "removed",
+                                "name": alias_name,
+                                "previous_slug": old_slug
+                            });
+                            Ok(serde_json::to_string_pretty(&result)?)
+                        }
+                    }
+                }
+                None => Err(RepriseError::Config(format!(
+                    "Alias '{}' not found",
+                    alias_name
+                ))),
+            }
+        }
+
+        // Set alias
+        (Some(alias_name), Some(alias_slug), false) => {
+            let was_update = config.get_alias(alias_name).is_some();
+            config.set_alias(alias_name.to_string(), alias_slug.to_string());
+            config.save()?;
+
+            match format {
+                OutputFormat::Pretty => {
+                    let action = if was_update { "Updated" } else { "Set" };
+                    Ok(format!(
+                        "{} {} alias: {} {} {}",
+                        "✓".green(),
+                        action,
+                        alias_name.cyan(),
+                        "→".dimmed(),
+                        alias_slug
+                    ))
+                }
+                OutputFormat::Json => {
+                    let result = serde_json::json!({
+                        "action": if was_update { "updated" } else { "created" },
+                        "name": alias_name,
+                        "slug": alias_slug
+                    });
+                    Ok(serde_json::to_string_pretty(&result)?)
+                }
+            }
+        }
+
+        // Invalid: remove flag without a name
+        (None, _, true) => Err(RepriseError::InvalidArgument(
+            "Alias name required with --remove flag".to_string(),
+        )),
+
+        // Invalid: slug without name
+        (None, Some(_), false) => Err(RepriseError::InvalidArgument(
+            "Alias name required when setting a slug".to_string(),
+        )),
+    }
 }

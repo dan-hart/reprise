@@ -105,6 +105,7 @@ Examples:
   reprise builds --workflow deploy Filter by workflow
   reprise builds --me             Show only my builds
   reprise builds --triggered-by alice  Show builds triggered by 'alice'
+  reprise builds --pr 1234        Show builds for PR #1234
   reprise builds --limit 50       Show more builds
   reprise builds --app other-app  Use different app
   reprise builds -o json          Output as JSON
@@ -112,6 +113,7 @@ Examples:
 Filtering:
   Use --me to show only builds you triggered (requires API auth).
   Use --triggered-by for partial username match (case-insensitive).
+  Use --pr to filter by pull request number.
   Combine multiple filters: --status failed --branch main --me
 
 Status Icons (in pretty output):
@@ -212,9 +214,16 @@ Examples:
   reprise artifacts abc123 -d ~/Downloads Download to home directory
   reprise artifacts abc123 -o json        List as JSON
 
+Filtering:
+  reprise artifacts abc123 --filter \"*.ipa\"       Only IPA files
+  reprise artifacts abc123 -f \"test-*\"            Files starting with test-
+  reprise artifacts abc123 --exclude \"*.dSYM*\"    Exclude dSYM files
+  reprise artifacts abc123 -f \"*.ipa\" -d .        Download only IPAs
+  reprise artifacts abc123 -f \"*.apk\" --exclude \"*-debug*\"  APKs except debug
+
 Downloading:
   Without -d/--download, artifacts are listed but not downloaded.
-  With -d, all artifacts are downloaded to the specified directory
+  With -d, matching artifacts are downloaded to the specified directory
   (or current directory if no path given). Existing files are overwritten.")]
     Artifacts(ArtifactsArgs),
 
@@ -247,17 +256,25 @@ Generate URL Examples:
   reprise url --pipeline p123 --app-slug xyz  Generate pipeline URL
   reprise url --build abc123 --browser        Generate and open in browser
 
-Build URL Actions:
+Build URL View Actions:
   reprise url <build-url> --logs         Dump the full build log
   reprise url <build-url> --follow       Stream live log output (for running builds)
   reprise url <build-url> --artifacts    List build artifacts
+
+Build URL Actions (Modify):
+  reprise url <build-url> --abort            Abort running build
+  reprise url <build-url> --abort -y         Abort without confirmation
+  reprise url <build-url> --abort --reason \"text\"  Abort with reason
+  reprise url <build-url> --retry            Rebuild with same parameters
+  reprise url <build-url> --retry --wait     Rebuild and wait for completion
+  reprise url <build-url> --download .       Download artifacts to directory
 
 App URL Actions:
   reprise url <app-url> --set-default    Set this app as your default
 
 Tips:
   Copy a URL from Bitrise and paste it here to quickly view status,
-  check logs, or download artifacts without setting up app context.
+  check logs, abort, retry, or download artifacts without setting up app context.
   Use --watch to monitor a running build until completion.")]
     Url(UrlArgs),
 
@@ -412,6 +429,10 @@ pub struct BuildsArgs {
     /// Show builds since a time (e.g., 1h, 30m, 2d, 1w, today, yesterday, this-week, 2025-01-15)
     #[arg(long, value_name = "DURATION")]
     pub since: Option<String>,
+
+    /// Filter by pull request number
+    #[arg(long, value_name = "NUMBER")]
+    pub pr: Option<i64>,
 
     /// Maximum number of builds to return
     #[arg(short, long, default_value = "25", value_name = "N")]
@@ -579,6 +600,31 @@ Walks you through setting up:
 
 This is the recommended way to get started with reprise.")]
     Init,
+
+    /// Manage app aliases (shortcuts for app slugs)
+    #[command(after_help = "\
+Examples:
+  reprise config alias                           List all aliases
+  reprise config alias ignite-ios                Show alias value
+  reprise config alias ignite-ios abc123def456   Set alias
+  reprise config alias ignite-ios --remove       Remove alias
+
+Aliases allow you to use short names instead of long app slugs:
+  reprise builds --app ignite-ios    # Uses alias
+  reprise builds --app abc123def456  # Uses slug directly
+
+Aliases are stored in ~/.reprise/config.toml under [aliases].")]
+    Alias {
+        /// Alias name (e.g., \"ignite-ios\"). Omit to list all aliases.
+        name: Option<String>,
+
+        /// App slug to associate with the alias. Omit to show current value.
+        slug: Option<String>,
+
+        /// Remove the alias instead of setting it
+        #[arg(short, long)]
+        remove: bool,
+    },
 }
 
 /// Arguments for the trigger command
@@ -628,9 +674,17 @@ pub struct ArtifactsArgs {
     #[arg(short, long)]
     pub app: Option<String>,
 
-    /// Download all artifacts to directory (current dir if no path given)
+    /// Download artifacts to directory (current dir if no path given)
     #[arg(short, long, value_hint = ValueHint::DirPath, value_name = "DIR")]
     pub download: Option<Option<String>>,
+
+    /// Filter artifacts by glob pattern (e.g., "*.ipa", "test-*")
+    #[arg(short, long, value_name = "PATTERN")]
+    pub filter: Option<String>,
+
+    /// Exclude artifacts matching glob pattern (e.g., "*.dSYM*")
+    #[arg(long, value_name = "PATTERN")]
+    pub exclude: Option<String>,
 }
 
 /// Arguments for the abort command
@@ -697,16 +751,44 @@ pub struct UrlArgs {
     pub set_default: bool,
 
     /// Dump the full build log (only for build URLs)
-    #[arg(long, conflicts_with_all = ["watch", "follow"])]
+    #[arg(long, conflicts_with_all = ["watch", "follow", "abort", "retry"])]
     pub logs: bool,
 
     /// Stream live log output for running builds (only for build URLs)
-    #[arg(short, long, conflicts_with_all = ["watch", "logs"])]
+    #[arg(short, long, conflicts_with_all = ["watch", "logs", "abort", "retry"])]
     pub follow: bool,
 
     /// List build artifacts (only for build URLs)
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["abort", "retry"])]
     pub artifacts: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // URL Actions (for build URLs)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Abort the build (only for build URLs)
+    #[arg(long, conflicts_with_all = ["retry", "download_dir", "logs", "follow"])]
+    pub abort: bool,
+
+    /// Reason for aborting (with --abort)
+    #[arg(long = "reason", value_name = "TEXT", requires = "abort")]
+    pub abort_reason: Option<String>,
+
+    /// Skip abort confirmation prompt (with --abort)
+    #[arg(short, long, requires = "abort")]
+    pub yes: bool,
+
+    /// Retry/rebuild the build with same parameters (only for build URLs)
+    #[arg(long, conflicts_with_all = ["abort", "download_dir", "logs", "follow"])]
+    pub retry: bool,
+
+    /// Wait for retry build to complete (with --retry)
+    #[arg(long = "wait", requires = "retry")]
+    pub retry_wait: bool,
+
+    /// Download artifacts to directory (only for build URLs)
+    #[arg(long = "download", value_name = "DIR", value_hint = ValueHint::DirPath, conflicts_with_all = ["abort", "retry"])]
+    pub download_dir: Option<String>,
 }
 
 /// Arguments for the pipelines command

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -20,6 +21,10 @@ pub struct Config {
     /// Output preferences
     #[serde(default)]
     pub output: OutputConfig,
+
+    /// App aliases (short name -> app slug)
+    #[serde(default)]
+    pub aliases: HashMap<String, String>,
 }
 
 /// API-related configuration
@@ -121,6 +126,29 @@ impl Config {
     /// Set the API token
     pub fn set_token(&mut self, token: String) {
         self.api.token = Some(token);
+    }
+
+    /// Set an app alias
+    pub fn set_alias(&mut self, name: String, slug: String) {
+        self.aliases.insert(name, slug);
+    }
+
+    /// Remove an app alias
+    pub fn remove_alias(&mut self, name: &str) -> Option<String> {
+        self.aliases.remove(name)
+    }
+
+    /// Get an app slug by alias name
+    pub fn get_alias(&self, name: &str) -> Option<&str> {
+        self.aliases.get(name).map(|s| s.as_str())
+    }
+
+    /// Resolve an app slug, checking aliases first
+    ///
+    /// If the input matches an alias, returns the corresponding slug.
+    /// Otherwise, returns the input unchanged.
+    pub fn resolve_alias<'a>(&'a self, input: &'a str) -> &'a str {
+        self.aliases.get(input).map(|s| s.as_str()).unwrap_or(input)
     }
 }
 

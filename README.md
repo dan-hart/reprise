@@ -124,6 +124,7 @@ reprise log abc123
 | `reprise config show` | | Display current configuration |
 | `reprise config set` | | Set a configuration value |
 | `reprise config path` | | Show config file location |
+| `reprise config alias` | | Manage app aliases |
 
 ## Global Options
 
@@ -150,6 +151,32 @@ app_name = "Your App Name"
 
 [output]
 format = "pretty"  # or "json"
+
+[aliases]
+ios = "abc123def456"
+android = "xyz789ghi012"
+```
+
+### App Aliases
+
+Create shortcuts for frequently used apps:
+
+```bash
+# Set an alias
+reprise config alias ios abc123def456
+
+# Use the alias anywhere you'd use an app slug
+reprise builds --app ios
+reprise trigger --app ios --workflow deploy
+
+# List all aliases
+reprise config alias
+
+# Show a specific alias
+reprise config alias ios
+
+# Remove an alias
+reprise config alias ios --remove
 ```
 
 ### Getting Your API Token
@@ -212,6 +239,35 @@ reprise builds --me
 reprise builds --triggered-by alice
 ```
 
+### Filter Builds by Pull Request
+
+```bash
+# Show builds for a specific PR
+reprise builds --pr 1234
+
+# Combined with other filters
+reprise builds --pr 1234 --status success
+```
+
+### Filter and Download Artifacts
+
+```bash
+# List artifacts for a build
+reprise artifacts abc123
+
+# Filter artifacts by pattern
+reprise artifacts abc123 --filter "*.ipa"
+
+# Exclude certain artifacts
+reprise artifacts abc123 --exclude "*.dSYM*"
+
+# Download only matching artifacts
+reprise artifacts abc123 --filter "*.ipa" --download .
+
+# Combine filter and exclude
+reprise artifacts abc123 --filter "test-*" --exclude "*-debug*"
+```
+
 ### Work with Bitrise URLs
 
 ```bash
@@ -232,6 +288,19 @@ reprise url https://app.bitrise.io/app/xyz789 --set-default
 
 # Watch build progress with notifications
 reprise url https://app.bitrise.io/build/abc123 --watch --notify
+
+# Abort a running build from URL
+reprise url https://app.bitrise.io/build/abc123 --abort
+reprise url https://app.bitrise.io/build/abc123 --abort --reason "Canceling for hotfix"
+reprise url https://app.bitrise.io/build/abc123 --abort -y  # Skip confirmation
+
+# Retry/rebuild from URL
+reprise url https://app.bitrise.io/build/abc123 --retry
+reprise url https://app.bitrise.io/build/abc123 --retry --wait  # Wait for completion
+
+# Download all artifacts from build URL
+reprise url https://app.bitrise.io/build/abc123 --download
+reprise url https://app.bitrise.io/build/abc123 --download ./output
 ```
 
 ### Pipeline Management

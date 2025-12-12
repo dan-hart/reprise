@@ -167,6 +167,9 @@ fn fetch_and_format_builds(
     // Apply client-side filters
     let workflow_contains_lower = args.workflow_contains.as_ref().map(|s| s.to_lowercase());
 
+    // PR number filter
+    let pr_filter = args.pr;
+
     let builds: Vec<_> = if let Some((ref bitrise_username, ref github_username)) = me_filter {
         // --me flag: match both Bitrise username and webhook-github/<github-username>
         response
@@ -185,6 +188,9 @@ fn fetch_and_format_builds(
             })
             .filter(|b| {
                 since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
+            })
+            .filter(|b| {
+                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
             })
             .take(args.limit as usize)
             .collect()
@@ -208,6 +214,9 @@ fn fetch_and_format_builds(
             .filter(|b| {
                 since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
             })
+            .filter(|b| {
+                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
+            })
             .take(args.limit as usize)
             .collect()
     } else {
@@ -219,6 +228,9 @@ fn fetch_and_format_builds(
             })
             .filter(|b| {
                 since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
+            })
+            .filter(|b| {
+                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
             })
             .take(args.limit as usize)
             .collect()

@@ -90,25 +90,33 @@ pub fn matches_user(triggered_by: &str, bitrise_username: &str, github_username:
 ///
 /// This is a common pattern used across many commands where the app
 /// can be specified via `--app` flag or falls back to the configured
-/// default app.
+/// default app. If the provided value matches a configured alias,
+/// the alias is resolved to its corresponding app slug.
 ///
 /// # Arguments
-/// * `app_arg` - Optional app slug from command line argument
+/// * `app_arg` - Optional app slug or alias from command line argument
 /// * `config` - Application configuration
 ///
 /// # Returns
-/// - The app slug from args if provided
+/// - The resolved app slug from args (after alias lookup) if provided
 /// - The default app slug from config if args is None
 /// - An error if neither is available
 ///
 /// # Example
 /// ```ignore
-/// let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+/// // With alias "ignite-ios" -> "abc123def456" configured:
+/// let app_slug = resolve_app_slug(Some("ignite-ios"), config)?;
+/// // Returns "abc123def456"
+///
+/// // Without alias:
+/// let app_slug = resolve_app_slug(Some("xyz789"), config)?;
+/// // Returns "xyz789" (passed through unchanged)
 /// ```
 pub fn resolve_app_slug<'a>(app_arg: Option<&'a str>, config: &'a Config) -> Result<&'a str> {
-    app_arg
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())
+    match app_arg {
+        Some(input) => Ok(config.resolve_alias(input)),
+        None => config.require_default_app(),
+    }
 }
 
 /// Set up a Ctrl+C interrupt handler for graceful cancellation.

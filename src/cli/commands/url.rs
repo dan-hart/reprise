@@ -171,6 +171,21 @@ fn validate_flags_for_url_type(parsed: &BitriseUrl, args: &UrlArgs) -> Result<()
                     "--artifacts is only valid for build URLs".to_string(),
                 ));
             }
+            if args.abort {
+                return Err(RepriseError::InvalidArgument(
+                    "--abort is only valid for build URLs".to_string(),
+                ));
+            }
+            if args.retry {
+                return Err(RepriseError::InvalidArgument(
+                    "--retry is only valid for build URLs".to_string(),
+                ));
+            }
+            if args.download_dir.is_some() {
+                return Err(RepriseError::InvalidArgument(
+                    "--download is only valid for build URLs".to_string(),
+                ));
+            }
         }
         BitriseUrl::Pipeline { .. } => {
             if args.set_default {
@@ -193,6 +208,21 @@ fn validate_flags_for_url_type(parsed: &BitriseUrl, args: &UrlArgs) -> Result<()
                     "--artifacts is only valid for build URLs (pipelines contain multiple workflows)".to_string(),
                 ));
             }
+            if args.abort {
+                return Err(RepriseError::InvalidArgument(
+                    "--abort is only valid for build URLs (use pipeline abort command for pipelines)".to_string(),
+                ));
+            }
+            if args.retry {
+                return Err(RepriseError::InvalidArgument(
+                    "--retry is only valid for build URLs (use pipeline rebuild command for pipelines)".to_string(),
+                ));
+            }
+            if args.download_dir.is_some() {
+                return Err(RepriseError::InvalidArgument(
+                    "--download is only valid for build URLs (pipelines contain multiple workflows)".to_string(),
+                ));
+            }
         }
     }
     Ok(())
@@ -208,6 +238,21 @@ fn handle_build_url(
 ) -> Result<String> {
     // Find the build and get the app_slug it belongs to
     let (build, app_slug) = find_build_with_app(client, config, build_slug)?;
+
+    // Handle --abort action: abort the build
+    if args.abort {
+        return abort_build_action(client, &app_slug, build_slug, &build, args, format);
+    }
+
+    // Handle --retry action: rebuild with same parameters
+    if args.retry {
+        return retry_build_action(client, &app_slug, &build, args, format);
+    }
+
+    // Handle --download action: download artifacts
+    if let Some(ref dir) = args.download_dir {
+        return download_artifacts_action(client, &app_slug, build_slug, dir, format);
+    }
 
     // Handle --logs flag: dump the full build log
     if args.logs {
@@ -823,4 +868,276 @@ fn open_url_in_browser(url: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// URL Actions (abort, retry, download)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Abort a build from URL
+fn abort_build_action(
+    client: &BitriseClient,
+    app_slug: &str,
+    build_slug: &str,
+    build: &Build,
+    args: &UrlArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    // Check if build is running
+    if !build.is_running() {
+        return match format {
+            OutputFormat::Pretty => Ok(format!(
+                "{} Build #{} is not running (status: {})",
+                "!".yellow(),
+                build.build_number,
+                build.status_text
+            )),
+            OutputFormat::Json => {
+                let json = serde_json::json!({
+                    "error": "Build is not running",
+                    "build_number": build.build_number,
+                    "status": build.status_text,
+                });
+                Ok(serde_json::to_string_pretty(&json)?)
+            }
+        };
+    }
+
+    // Confirm unless --yes flag is set
+    if !args.yes && format == OutputFormat::Pretty {
+        eprint!(
+            "{} Abort build #{} on branch '{}'? [y/N] ",
+            "?".yellow(),
+            build.build_number,
+            build.branch
+        );
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            return Ok("Aborted.".to_string());
+        }
+    }
+
+    // Abort the build
+    client.abort_build(app_slug, build_slug, args.abort_reason.as_deref())?;
+
+    match format {
+        OutputFormat::Pretty => {
+            let mut output = String::new();
+            output.push_str(&format!(
+                "{} Build #{} aborted\n",
+                "✓".green(),
+                build.build_number.to_string().bold()
+            ));
+            output.push_str(&format!("  Workflow: {}\n", build.triggered_workflow));
+            output.push_str(&format!("  Branch:   {}\n", build.branch));
+            if let Some(ref reason) = args.abort_reason {
+                output.push_str(&format!("  Reason:   {}", reason));
+            }
+            Ok(output.trim_end().to_string())
+        }
+        OutputFormat::Json => {
+            let json = serde_json::json!({
+                "status": "aborted",
+                "build_number": build.build_number,
+                "build_slug": build_slug,
+                "reason": args.abort_reason,
+            });
+            Ok(serde_json::to_string_pretty(&json)?)
+        }
+    }
+}
+
+/// Retry/rebuild a build from URL
+fn retry_build_action(
+    client: &BitriseClient,
+    app_slug: &str,
+    build: &Build,
+    args: &UrlArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    use crate::bitrise::TriggerParams;
+
+    // Trigger a new build with the same parameters
+    let params = TriggerParams {
+        branch: Some(build.branch.clone()),
+        workflow_id: build.triggered_workflow.clone(),
+        commit_message: build.commit_message.clone(),
+        environments: vec![],
+    };
+
+    let new_build = client.trigger_build(app_slug, params)?;
+
+    let new_build_slug = &new_build.slug;
+    let new_build_number = new_build.build_number;
+
+    // If --wait flag, watch the build until completion
+    if args.retry_wait {
+        if format == OutputFormat::Pretty {
+            eprintln!(
+                "{} Triggered rebuild #{}, waiting for completion...\n",
+                "✓".green(),
+                new_build_number
+            );
+        }
+        return watch_build_with_app(
+            client,
+            app_slug,
+            new_build_slug,
+            args.interval,
+            args.notify,
+            format,
+        );
+    }
+
+    match format {
+        OutputFormat::Pretty => {
+            let mut output = String::new();
+            output.push_str(&format!(
+                "{} Triggered rebuild\n",
+                "✓".green()
+            ));
+            output.push_str(&format!(
+                "  Original: #{} ({}, {})\n",
+                build.build_number,
+                build.triggered_workflow,
+                build.branch
+            ));
+            output.push_str(&format!(
+                "  New:      #{} (slug: {})\n",
+                new_build_number,
+                new_build_slug
+            ));
+            output.push_str(&format!(
+                "\n  URL: https://app.bitrise.io/build/{}",
+                new_build_slug
+            ));
+            Ok(output)
+        }
+        OutputFormat::Json => {
+            let json = serde_json::json!({
+                "status": "triggered",
+                "original_build_number": build.build_number,
+                "new_build_number": new_build_number,
+                "new_build_slug": new_build_slug,
+                "workflow": build.triggered_workflow,
+                "branch": build.branch,
+                "url": format!("https://app.bitrise.io/build/{}", new_build_slug)
+            });
+            Ok(serde_json::to_string_pretty(&json)?)
+        }
+    }
+}
+
+/// Download artifacts from URL
+fn download_artifacts_action(
+    client: &BitriseClient,
+    app_slug: &str,
+    build_slug: &str,
+    dir: &str,
+    format: OutputFormat,
+) -> Result<String> {
+    use std::path::PathBuf;
+
+    let response = client.list_artifacts(app_slug, build_slug)?;
+
+    if response.data.is_empty() {
+        return match format {
+            OutputFormat::Pretty => Ok("No artifacts found for this build.".dimmed().to_string()),
+            OutputFormat::Json => {
+                let json = serde_json::json!({
+                    "downloaded": [],
+                    "directory": dir,
+                    "message": "No artifacts found"
+                });
+                Ok(serde_json::to_string_pretty(&json)?)
+            }
+        };
+    }
+
+    let download_dir = if dir.is_empty() {
+        std::env::current_dir()?
+    } else {
+        PathBuf::from(dir)
+    };
+
+    // Create directory if it doesn't exist
+    std::fs::create_dir_all(&download_dir)?;
+
+    let mut downloaded = Vec::new();
+
+    for artifact in &response.data {
+        // Get artifact with download URL
+        let artifact_detail = client.get_artifact(app_slug, build_slug, &artifact.slug)?;
+
+        if let Some(ref url) = artifact_detail.data.expiring_download_url {
+            // Sanitize filename to prevent path traversal
+            let safe_filename = sanitize_artifact_filename(&artifact.title)?;
+            let file_path = download_dir.join(&safe_filename);
+
+            if format == OutputFormat::Pretty {
+                eprint!("Downloading {}... ", safe_filename);
+            }
+
+            client.download_artifact(url, &file_path)?;
+
+            if format == OutputFormat::Pretty {
+                eprintln!("{}", "done".green());
+            }
+
+            downloaded.push(safe_filename);
+        }
+    }
+
+    match format {
+        OutputFormat::Pretty => {
+            Ok(format!(
+                "\n{} Downloaded {} artifact(s) to {}",
+                "✓".green(),
+                downloaded.len(),
+                download_dir.display()
+            ))
+        }
+        OutputFormat::Json => {
+            let json = serde_json::json!({
+                "downloaded": downloaded,
+                "directory": download_dir.to_string_lossy(),
+            });
+            Ok(serde_json::to_string_pretty(&json)?)
+        }
+    }
+}
+
+/// Sanitize artifact filename (duplicated from artifacts.rs for self-contained module)
+fn sanitize_artifact_filename(name: &str) -> Result<String> {
+    use std::path::Path;
+
+    let base_name = Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| {
+            RepriseError::InvalidArgument(format!(
+                "Cannot extract safe filename from: {}",
+                name
+            ))
+        })?;
+
+    if base_name.contains("..") || base_name.contains('/') || base_name.contains('\\') {
+        return Err(RepriseError::InvalidArgument(format!(
+            "Unsafe artifact filename rejected: {}",
+            name
+        )));
+    }
+
+    if base_name.is_empty() || base_name.starts_with('.') {
+        return Err(RepriseError::InvalidArgument(format!(
+            "Invalid artifact filename: {}",
+            name
+        )));
+    }
+
+    Ok(base_name.to_string())
 }
