@@ -96,9 +96,25 @@ impl BitriseClient {
         }
 
         let body = response.text()?;
-        serde_json::from_str(&body).map_err(|e| {
-            RepriseError::Json(e)
-        })
+        serde_json::from_str(&body).map_err(|e| RepriseError::Json(e))
+    }
+
+    /// Make a GET request and return raw text
+    fn get_text(&self, path: &str) -> Result<String> {
+        let url = format!("{}{path}", self.base_url);
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", &self.token)
+            .send()?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().unwrap_or_default();
+            return Err(RepriseError::api(status.as_u16(), message));
+        }
+
+        Ok(response.text()?)
     }
 
     /// Fetch raw content from a URL (for log files)
@@ -159,6 +175,24 @@ impl BitriseClient {
     /// Get a specific app by slug
     pub fn get_app(&self, slug: &str) -> Result<AppResponse> {
         self.get(&format!("/apps/{slug}"))
+    }
+
+    /// Get the app bitrise.yml contents
+    pub fn get_bitrise_yml(&self, app_slug: &str) -> Result<String> {
+        self.get_text(&format!("/apps/{app_slug}/bitrise.yml"))
+    }
+
+    /// Upload a new app bitrise.yml contents
+    pub fn update_bitrise_yml(
+        &self,
+        app_slug: &str,
+        yml_content: &str,
+    ) -> Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "app_config_datastore_yaml": yml_content,
+        });
+
+        self.post(&format!("/apps/{app_slug}/bitrise.yml"), &body)
     }
 
     /// Find an app by name (partial match)
@@ -229,10 +263,7 @@ impl BitriseClient {
             .host_str()
             .filter(|h| !h.is_empty())
             .ok_or_else(|| {
-                RepriseError::InvalidArgument(format!(
-                    "{} URL has no valid host: {}",
-                    purpose, url
-                ))
+                RepriseError::InvalidArgument(format!("{} URL has no valid host: {}", purpose, url))
             })?;
 
         let is_allowed = ALLOWED_HOSTS
@@ -377,7 +408,8 @@ impl BitriseClient {
     /// Get a specific pipeline
     pub fn get_pipeline(&self, app_slug: &str, pipeline_id: &str) -> Result<PipelineResponse> {
         // Get raw response to handle different API formats
-        let raw: serde_json::Value = self.get(&format!("/apps/{app_slug}/pipelines/{pipeline_id}"))?;
+        let raw: serde_json::Value =
+            self.get(&format!("/apps/{app_slug}/pipelines/{pipeline_id}"))?;
 
         // Try to parse as wrapped format first, then as direct Pipeline
         if raw.get("data").is_some() {
@@ -697,7 +729,10 @@ mod tests {
         let mock = server
             .mock("GET", "/apps/my-app")
             .with_status(200)
-            .with_body(format!(r#"{{"data": {}}}"#, make_app_json("my-app", "My App")))
+            .with_body(format!(
+                r#"{{"data": {}}}"#,
+                make_app_json("my-app", "My App")
+            ))
             .create();
 
         let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
@@ -726,6 +761,51 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.exit_code(), 66); // EX_NOINPUT
+    }
+
+    #[test]
+    fn test_get_bitrise_yml_success() {
+        let mut server = Server::new();
+        let yml = "format_version: \"13\"\\nworkflows:\\n  primary:\\n    steps: []\\n";
+
+        let mock = server
+            .mock("GET", "/apps/test-app/bitrise.yml")
+            .match_header("Authorization", "test-token")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body(yml)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.get_bitrise_yml("test-app");
+
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), yml);
+    }
+
+    #[test]
+    fn test_update_bitrise_yml_success() {
+        let mut server = Server::new();
+        let yml = "format_version: \"13\"\\nworkflows:\\n  primary:\\n    steps: []\\n";
+
+        let mock = server
+            .mock("POST", "/apps/test-app/bitrise.yml")
+            .match_header("Authorization", "test-token")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "app_config_datastore_yaml": yml
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"warnings":null}"#)
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let result = client.update_bitrise_yml("test-app", yml);
+
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({ "warnings": null }));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -776,7 +856,10 @@ mod tests {
         let mock = server
             .mock("GET", "/apps/test-app/builds/build-slug")
             .with_status(200)
-            .with_body(format!(r#"{{"data": {}}}"#, make_build_json("build-slug", 42, 1)))
+            .with_body(format!(
+                r#"{{"data": {}}}"#,
+                make_build_json("build-slug", 42, 1)
+            ))
             .create();
 
         let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
@@ -844,7 +927,10 @@ mod tests {
         let mock = server
             .mock("GET", "/apps/test-app/pipelines/pipeline-id")
             .with_status(200)
-            .with_body(format!(r#"{{"data": {}}}"#, make_pipeline_json("pipeline-id", 1)))
+            .with_body(format!(
+                r#"{{"data": {}}}"#,
+                make_pipeline_json("pipeline-id", 1)
+            ))
             .create();
 
         let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();

@@ -75,6 +75,7 @@ fn run() -> Result<(), RepriseError> {
                 Commands::Url(args) => commands::url(&client, &mut config, args, format)?,
                 Commands::Pipelines(args) => commands::pipelines(&client, &config, args, format)?,
                 Commands::Pipeline(args) => commands::pipeline(&client, &config, args, format)?,
+                Commands::Yml(args) => commands::yml(&client, &config, args, format)?,
                 Commands::Config(_) | Commands::Completions(_) => unreachable!(),
             }
         }

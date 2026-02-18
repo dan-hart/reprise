@@ -22,6 +22,7 @@ A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 - **Log viewing** - View, tail, follow, and save build logs with syntax highlighting
 - **Smart filtering** - Filter builds and pipelines by status, branch, workflow, or creator (`--me`)
 - **URL integration** - Paste any Bitrise URL to instantly view status, logs, or artifacts
+- **Safe bitrise.yml updates** - Automatically backs up current config before every upload
 
 ## Installation
 
@@ -125,6 +126,8 @@ reprise log abc123
 | `reprise config set` | | Set a configuration value |
 | `reprise config path` | | Show config file location |
 | `reprise config alias` | | Manage app aliases |
+| `reprise yml get` | | Fetch current bitrise.yml |
+| `reprise yml set --file <path>` | | Upload bitrise.yml with automatic pre-update backup |
 
 ## Global Options
 
@@ -209,6 +212,16 @@ reprise builds --status failed --branch main --limit 10
 
 ```bash
 reprise log abc123 --save build.log
+```
+
+### Safely Update bitrise.yml
+
+```bash
+# Fetch and inspect current config
+reprise yml get --save ./current.bitrise.yml
+
+# Upload a new config (reprise auto-saves a timestamped backup first)
+reprise yml set --file ./bitrise.yml
 ```
 
 ### View Last 50 Lines of a Log

@@ -16,7 +16,9 @@ fn test_help() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("A fast, feature-rich CLI for Bitrise"));
+        .stdout(predicate::str::contains(
+            "A fast, feature-rich CLI for Bitrise",
+        ));
 }
 
 #[test]
@@ -74,6 +76,26 @@ fn test_config_help() {
         .stdout(predicate::str::contains("show"))
         .stdout(predicate::str::contains("set"))
         .stdout(predicate::str::contains("path"));
+}
+
+#[test]
+fn test_yml_help() {
+    reprise()
+        .args(["yml", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bitrise.yml"))
+        .stdout(predicate::str::contains("get"))
+        .stdout(predicate::str::contains("set"));
+}
+
+#[test]
+fn test_yml_set_requires_file() {
+    reprise()
+        .args(["yml", "set"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--file"));
 }
 
 #[test]
@@ -561,7 +583,9 @@ fn test_url_generate_build() {
         .args(["url", "--build", "abc123"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("https://app.bitrise.io/build/abc123"));
+        .stdout(predicate::str::contains(
+            "https://app.bitrise.io/build/abc123",
+        ));
 }
 
 #[test]
@@ -570,7 +594,9 @@ fn test_url_generate_app() {
         .args(["url", "--app", "xyz789"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("https://app.bitrise.io/app/xyz789"));
+        .stdout(predicate::str::contains(
+            "https://app.bitrise.io/app/xyz789",
+        ));
 }
 
 #[test]
@@ -588,7 +614,9 @@ fn test_url_generate_pipeline() {
         .args(["url", "--pipeline", "p123", "--app-slug", "myapp"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("https://app.bitrise.io/app/myapp/pipelines/p123"));
+        .stdout(predicate::str::contains(
+            "https://app.bitrise.io/app/myapp/pipelines/p123",
+        ));
 }
 
 #[test]
@@ -648,10 +676,7 @@ fn test_config_alias_help() {
 #[test]
 fn test_config_alias_subcommand_exists() {
     // Config alias without args should list aliases (or show empty message)
-    reprise()
-        .args(["config", "alias"])
-        .assert()
-        .success();
+    reprise().args(["config", "alias"]).assert().success();
 }
 
 #[test]

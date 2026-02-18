@@ -11,6 +11,7 @@ mod pipeline;
 mod pipelines;
 mod trigger;
 mod url;
+mod yml;
 
 pub use self::abort::abort;
 pub use self::app::{app_set, app_show};
@@ -24,3 +25,4 @@ pub use self::pipeline::pipeline;
 pub use self::pipelines::pipelines;
 pub use self::trigger::trigger;
 pub use self::url::{is_generation_mode, url, url_generate};
+pub use self::yml::yml;

@@ -80,7 +80,9 @@ Examples:
     Apps(AppsArgs),
 
     /// Show or set the default app
-    #[command(alias = "a", after_help = "\
+    #[command(
+        alias = "a",
+        after_help = "\
 Examples:
   reprise app                     Show current default app
   reprise app show                Same as above
@@ -91,11 +93,14 @@ Examples:
 
 The default app is used by builds, trigger, log, and other commands
 when the --app flag is not specified. The slug is the unique identifier
-found in your Bitrise app URL: app.bitrise.io/app/<slug>")]
+found in your Bitrise app URL: app.bitrise.io/app/<slug>"
+    )]
     App(AppArgs),
 
     /// List builds for the default or specified app
-    #[command(alias = "b", after_help = "\
+    #[command(
+        alias = "b",
+        after_help = "\
 Examples:
   reprise builds                  List recent builds
   reprise b                       Short alias
@@ -120,7 +125,8 @@ Status Icons (in pretty output):
   [running]  Build is currently in progress
   [success]  Build completed successfully
   [failed]   Build failed
-  [aborted]  Build was manually aborted")]
+  [aborted]  Build was manually aborted"
+    )]
     Builds(BuildsArgs),
 
     /// Show details of a specific build
@@ -182,6 +188,21 @@ The config file is stored in your system's config directory.
 Use 'reprise config path' to see the exact location.")]
     Config(ConfigArgs),
 
+    /// Get or update an app's bitrise.yml
+    #[command(after_help = "\
+Examples:
+  reprise yml get                          Print bitrise.yml for default app
+  reprise yml get --app abc123             Print bitrise.yml for specific app
+  reprise yml get --save ./bitrise.yml     Save bitrise.yml to file
+  reprise yml set --file ./bitrise.yml     Upload bitrise.yml (auto-backs up current config)
+  reprise yml set --file ./bitrise.yml --app abc123
+  reprise yml set --file ./bitrise.yml --backup-dir ./backups
+
+Safety:
+  Before every upload, reprise fetches the current bitrise.yml and
+  saves a timestamped backup copy so you can roll back quickly.")]
+    Yml(YmlArgs),
+
     /// Trigger a new build
     #[command(after_help = "\
 Examples:
@@ -205,7 +226,9 @@ Environment Variables:
     Trigger(TriggerArgs),
 
     /// List or download build artifacts
-    #[command(alias = "art", after_help = "\
+    #[command(
+        alias = "art",
+        after_help = "\
 Examples:
   reprise artifacts abc123                List artifacts for build
   reprise art abc123                      Short alias
@@ -224,7 +247,8 @@ Filtering:
 Downloading:
   Without -d/--download, artifacts are listed but not downloaded.
   With -d, matching artifacts are downloaded to the specified directory
-  (or current directory if no path given). Existing files are overwritten.")]
+  (or current directory if no path given). Existing files are overwritten."
+    )]
     Artifacts(ArtifactsArgs),
 
     /// Abort a running build
@@ -279,7 +303,9 @@ Tips:
     Url(UrlArgs),
 
     /// List pipelines for the default or specified app
-    #[command(alias = "pl", after_help = "\
+    #[command(
+        alias = "pl",
+        after_help = "\
 Examples:
   reprise pipelines                  List recent pipelines
   reprise pl                         Short alias
@@ -298,11 +324,14 @@ Filtering:
 
 Pipelines vs Builds:
   Pipelines orchestrate multiple workflows in stages. Use 'builds'
-  to see individual workflow executions within a pipeline.")]
+  to see individual workflow executions within a pipeline."
+    )]
     Pipelines(PipelinesArgs),
 
     /// Show or manage a specific pipeline
-    #[command(alias = "p", after_help = "\
+    #[command(
+        alias = "p",
+        after_help = "\
 Examples:
   reprise pipeline abc123                          Show pipeline details
   reprise p abc123                                 Short alias
@@ -324,7 +353,8 @@ Subcommands:
   rebuild   Re-run a pipeline (full or partial)
   watch     Monitor pipeline progress until completion
 
-Use 'reprise pipeline <subcommand> --help' for subcommand details.")]
+Use 'reprise pipeline <subcommand> --help' for subcommand details."
+    )]
     Pipeline(PipelineArgs),
 
     /// Generate shell completions
@@ -541,6 +571,58 @@ pub struct LogArgs {
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub command: ConfigCommands,
+}
+
+/// Arguments for the yml command
+#[derive(Args)]
+pub struct YmlArgs {
+    #[command(subcommand)]
+    pub command: YmlCommands,
+}
+
+/// yml subcommands
+#[derive(Subcommand)]
+pub enum YmlCommands {
+    /// Fetch the current bitrise.yml for an app
+    #[command(after_help = "\
+Examples:
+  reprise yml get
+  reprise yml get --app abc123def456
+  reprise yml get --save ./bitrise.yml
+
+Without --save, the yml content is printed to stdout.")]
+    Get {
+        /// App slug (overrides default app)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Save output to file instead of stdout
+        #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+        save: Option<String>,
+    },
+
+    /// Upload a new bitrise.yml for an app
+    #[command(after_help = "\
+Examples:
+  reprise yml set --file ./bitrise.yml
+  reprise yml set --file ./bitrise.yml --app abc123def456
+  reprise yml set --file ./bitrise.yml --backup-dir ./my-backups
+
+Before uploading, reprise ALWAYS saves the current bitrise.yml
+as a timestamped backup copy.")]
+    Set {
+        /// Path to bitrise.yml file to upload
+        #[arg(short, long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+        file: String,
+
+        /// App slug (overrides default app)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Backup directory (defaults to ~/.reprise/backups/bitrise-yml/<app-slug>/)
+        #[arg(long, value_hint = ValueHint::DirPath, value_name = "DIR")]
+        backup_dir: Option<String>,
+    },
 }
 
 /// Config subcommands
@@ -765,7 +847,6 @@ pub struct UrlArgs {
     // ─────────────────────────────────────────────────────────────────────────
     // URL Actions (for build URLs)
     // ─────────────────────────────────────────────────────────────────────────
-
     /// Abort the build (only for build URLs)
     #[arg(long, conflicts_with_all = ["retry", "download_dir", "logs", "follow"])]
     pub abort: bool,
