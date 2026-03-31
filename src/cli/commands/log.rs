@@ -32,6 +32,7 @@ pub fn log(
         args.status,
         args.pr,
         args.current_branch,
+        format,
     )?;
 
     // Handle follow mode

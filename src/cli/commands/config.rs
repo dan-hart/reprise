@@ -20,6 +20,14 @@ fn mask_token(token: &str, visible_chars: usize) -> String {
     }
 }
 
+fn redact_profile(profile: &ProfileConfig) -> ProfileConfig {
+    let mut safe_profile = profile.clone();
+    if let Some(ref token) = safe_profile.api.token {
+        safe_profile.api.token = Some(mask_token(token, 4));
+    }
+    safe_profile
+}
+
 /// Handle the config command
 pub fn config(config: &mut Config, args: &ConfigArgs, format: OutputFormat) -> Result<String> {
     match &args.command {
@@ -110,9 +118,7 @@ fn config_show(config: &Config, format: OutputFormat) -> Result<String> {
                 safe_config.api.token = Some(mask_token(token, 4));
             }
             for profile in safe_config.profiles.values_mut() {
-                if let Some(ref token) = profile.api.token {
-                    profile.api.token = Some(mask_token(token, 4));
-                }
+                *profile = redact_profile(profile);
             }
             Ok(serde_json::to_string_pretty(&safe_config)?)
         }
@@ -397,7 +403,14 @@ fn config_profile(
                 }
                 Ok(output)
             }
-            OutputFormat::Json => Ok(serde_json::to_string_pretty(&config.profiles)?),
+            OutputFormat::Json => {
+                let safe_profiles: std::collections::BTreeMap<_, _> = config
+                    .profiles
+                    .iter()
+                    .map(|(name, profile)| (name.clone(), redact_profile(profile)))
+                    .collect();
+                Ok(serde_json::to_string_pretty(&safe_profiles)?)
+            }
         },
         (Some(name), _, _, _, _, true) => {
             config
@@ -455,7 +468,7 @@ fn config_profile(
                     output.push_str(&format!("format = {}\n", profile.output.format));
                     Ok(output)
                 }
-                OutputFormat::Json => Ok(serde_json::to_string_pretty(profile)?),
+                OutputFormat::Json => Ok(serde_json::to_string_pretty(&redact_profile(profile))?),
             }
         }
         (Some(name), token, app, profile_format, use_profile, false) => {
@@ -496,5 +509,56 @@ fn config_profile(
         | (None, None, None, Some(_), false, false) => Err(RepriseError::InvalidArgument(
             "Profile name is required for this operation.".to_string(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_profile_list_json_redacts_tokens() {
+        let mut config = Config::default();
+        let mut profile = ProfileConfig::default();
+        profile.api.token = Some("super-secret-token".to_string());
+        config.upsert_profile("secondary".to_string(), profile);
+
+        let output = config_profile(
+            &mut config,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .expect("profile list json");
+
+        assert!(!output.contains("super-secret-token"));
+        assert!(output.contains("supe...oken") || output.contains("****"));
+    }
+
+    #[test]
+    fn test_config_profile_show_json_redacts_tokens() {
+        let mut config = Config::default();
+        let mut profile = ProfileConfig::default();
+        profile.api.token = Some("super-secret-token".to_string());
+        config.upsert_profile("secondary".to_string(), profile);
+
+        let output = config_profile(
+            &mut config,
+            Some("secondary"),
+            None,
+            None,
+            None,
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .expect("profile show json");
+
+        assert!(!output.contains("super-secret-token"));
+        assert!(output.contains("supe...oken") || output.contains("****"));
     }
 }

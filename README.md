@@ -168,15 +168,15 @@ format = "pretty"  # or "json"
 ios = "abc123def456"
 android = "xyz789ghi012"
 
-active_profile = "work"
+active_profile = "secondary"
 
-[profiles.work.api]
-token = "your_work_token"
+[profiles.secondary.api]
+token = "your_secondary_bitrise_api_token"
 
-[profiles.work.defaults]
-app_slug = "work-app"
+[profiles.secondary.defaults]
+app_slug = "secondary-app"
 
-[profiles.work.output]
+[profiles.secondary.output]
 format = "pretty"
 
 [views.failures]
@@ -214,10 +214,10 @@ Create named Bitrise contexts with their own token and default app:
 
 ```bash
 # Create or update a profile
-reprise config profile work --token YOUR_TOKEN --app abc123def456
+reprise config profile secondary --token YOUR_TOKEN --app abc123def456
 
 # Switch to it
-reprise config profile work --use
+reprise config profile secondary --use
 
 # List profiles
 reprise config profile

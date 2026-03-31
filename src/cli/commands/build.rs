@@ -32,6 +32,7 @@ pub fn build(
         args.status,
         args.pr,
         args.current_branch,
+        format,
     )?;
 
     // Handle --follow: stream live log output

@@ -181,6 +181,7 @@ pub fn artifacts(
         args.status,
         args.pr,
         args.current_branch,
+        format,
     )?;
 
     // List artifacts

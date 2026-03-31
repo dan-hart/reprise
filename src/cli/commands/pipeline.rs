@@ -114,7 +114,7 @@ fn pipeline_show(
     format: OutputFormat,
 ) -> Result<String> {
     let app_slug = resolve_app_slug(app, config)?;
-    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false, format)?;
 
     let response = client.get_pipeline(app_slug, &pipeline_id)?;
     output::format_pipeline(&response.into_pipeline(), format)
@@ -193,7 +193,7 @@ fn pipeline_abort(
     format: OutputFormat,
 ) -> Result<String> {
     let app_slug = resolve_app_slug(app, config)?;
-    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false, format)?;
 
     // Confirm unless --yes flag is provided
     if !skip_confirmation {
@@ -243,7 +243,7 @@ fn pipeline_rebuild(
     format: OutputFormat,
 ) -> Result<String> {
     let app_slug = resolve_app_slug(app, config)?;
-    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false, format)?;
 
     let pipeline = client.rebuild_pipeline(app_slug, &pipeline_id, partial)?;
 
@@ -295,7 +295,7 @@ fn pipeline_watch(
     format: OutputFormat,
 ) -> Result<String> {
     let app_slug = resolve_app_slug(app, config)?;
-    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false, format)?;
 
     // Initial display
     if format == OutputFormat::Pretty {

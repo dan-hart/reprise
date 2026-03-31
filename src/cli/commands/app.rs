@@ -23,7 +23,7 @@ pub fn app_set(
         }
     };
 
-    let app = resolve_app_from_identifier(client, app_identifier)?;
+    let app = resolve_app_from_identifier(client, app_identifier, format)?;
 
     // Update config
     config.set_default_app(app.slug.clone(), Some(app.title.clone()));

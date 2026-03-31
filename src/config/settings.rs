@@ -366,31 +366,31 @@ mod tests {
         config.set_alias("root".to_string(), "root-slug".to_string());
 
         let mut profile = ProfileConfig::default();
-        profile.api.token = Some("work-token".to_string());
-        profile.defaults.app_slug = Some("work-app".to_string());
+        profile.api.token = Some("secondary-token".to_string());
+        profile.defaults.app_slug = Some("secondary-app".to_string());
         profile
             .aliases
-            .insert("work".to_string(), "work-slug".to_string());
+            .insert("secondary".to_string(), "secondary-slug".to_string());
 
-        config.active_profile = Some("work".to_string());
-        config.profiles.insert("work".to_string(), profile);
+        config.active_profile = Some("secondary".to_string());
+        config.profiles.insert("secondary".to_string(), profile);
 
-        assert_eq!(config.require_token().unwrap(), "work-token");
-        assert_eq!(config.require_default_app().unwrap(), "work-app");
-        assert_eq!(config.resolve_alias("work"), "work-slug");
+        assert_eq!(config.require_token().unwrap(), "secondary-token");
+        assert_eq!(config.require_default_app().unwrap(), "secondary-app");
+        assert_eq!(config.resolve_alias("secondary"), "secondary-slug");
         assert_eq!(config.resolve_alias("root"), "root-slug");
     }
 
     #[test]
     fn test_set_token_uses_active_profile() {
         let mut config = Config::default();
-        config.active_profile = Some("work".to_string());
+        config.active_profile = Some("secondary".to_string());
 
-        config.set_token("work-token".to_string());
+        config.set_token("secondary-token".to_string());
 
         assert_eq!(
-            config.profiles["work"].api.token.as_deref(),
-            Some("work-token")
+            config.profiles["secondary"].api.token.as_deref(),
+            Some("secondary-token")
         );
         assert!(config.api.token.is_none());
     }

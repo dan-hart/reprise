@@ -10,7 +10,7 @@ use std::{io, io::Write};
 use is_terminal::IsTerminal;
 
 use crate::bitrise::{App, BitriseClient, Build};
-use crate::cli::args::BuildStatusFilter;
+use crate::cli::args::{BuildStatusFilter, OutputFormat};
 use crate::config::Config;
 use crate::error::{RepriseError, Result};
 
@@ -65,9 +65,9 @@ pub fn get_github_username() -> Option<String> {
 /// # Example
 /// ```ignore
 /// let matches = matches_user(
-///     "webhook-github/dan-hart",
+///     "webhook-github/octocat",
 ///     "bitrise-user",
-///     Some("dan-hart"),
+///     Some("octocat"),
 /// );
 /// assert!(matches);
 /// ```
@@ -180,7 +180,7 @@ pub fn resolve_latest_build(
         status.map(BuildStatusFilter::to_api_code),
         branch.as_deref(),
         workflow,
-        25,
+        latest_build_page_size(pr),
     )?;
 
     response
@@ -190,6 +190,25 @@ pub fn resolve_latest_build(
         .ok_or_else(|| {
             RepriseError::BuildNotFound("No build matched the latest filters".to_string())
         })
+}
+
+fn latest_build_page_size(pr: Option<i64>) -> u32 {
+    if pr.is_some() {
+        50
+    } else {
+        25
+    }
+}
+
+fn ensure_interactive_selection_allowed(format: OutputFormat, resource: &str) -> Result<()> {
+    if format == OutputFormat::Json {
+        return Err(RepriseError::InvalidArgument(format!(
+            "Interactive {} selection is not supported with --output json. Provide an explicit target instead.",
+            resource
+        )));
+    }
+
+    Ok(())
 }
 
 /// Whether the current process can safely prompt the user for interactive input.
@@ -248,6 +267,7 @@ pub fn resolve_build_slug(
     status: Option<BuildStatusFilter>,
     pr: Option<i64>,
     current_branch: bool,
+    format: OutputFormat,
 ) -> Result<String> {
     if let Some(slug) = slug {
         return Ok(slug.to_string());
@@ -265,6 +285,8 @@ pub fn resolve_build_slug(
         )?
         .slug);
     }
+
+    ensure_interactive_selection_allowed(format, "build")?;
 
     let response = client.list_builds(app_slug, None, None, None, 10)?;
     let options: Vec<String> = response
@@ -288,6 +310,7 @@ pub fn resolve_build_slug(
 pub fn resolve_app_from_identifier(
     client: &BitriseClient,
     identifier: Option<&str>,
+    format: OutputFormat,
 ) -> Result<App> {
     if let Some(identifier) = identifier {
         return match client.get_app(identifier) {
@@ -297,6 +320,8 @@ pub fn resolve_app_from_identifier(
                 .ok_or_else(|| RepriseError::AppNotFound(identifier.to_string())),
         };
     }
+
+    ensure_interactive_selection_allowed(format, "app")?;
 
     let response = client.list_apps(25)?;
     let options: Vec<String> = response
@@ -315,6 +340,7 @@ pub fn resolve_pipeline_id(
     pipeline_id: Option<&str>,
     branch: Option<&str>,
     current_branch: bool,
+    format: OutputFormat,
 ) -> Result<String> {
     if let Some(pipeline_id) = pipeline_id {
         return Ok(pipeline_id.to_string());
@@ -325,6 +351,8 @@ pub fn resolve_pipeline_id(
     } else {
         branch.map(str::to_string)
     };
+
+    ensure_interactive_selection_allowed(format, "pipeline")?;
 
     let response = client.list_pipelines(app_slug, None, branch.as_deref(), 10)?;
     let options: Vec<String> = response
@@ -358,11 +386,26 @@ pub fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(["/C", "start", url])
+            .args(windows_start_args(url))
             .spawn()?;
     }
 
     Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_start_args(url: &str) -> Vec<String> {
+    vec![
+        "/C".to_string(),
+        "start".to_string(),
+        String::new(),
+        format!("\"{url}\""),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_clipboard_candidates() -> [&'static [&'static str]; 2] {
+    [&["xclip", "-selection", "clipboard"], &["wl-copy"]]
 }
 
 /// Copy text to the system clipboard using common platform tools.
@@ -381,9 +424,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let candidates = [["xclip", "-selection", "clipboard"], ["wl-copy"]];
-
-        for candidate in candidates {
+        for candidate in linux_clipboard_candidates() {
             let mut command = std::process::Command::new(candidate[0]);
             if candidate.len() > 1 {
                 command.args(&candidate[1..]);
@@ -496,23 +537,23 @@ mod tests {
     #[test]
     fn test_matches_user_webhook_github_exact() {
         assert!(matches_user(
-            "webhook-github/dan-hart",
+            "webhook-github/octocat",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
     #[test]
     fn test_matches_user_webhook_github_case_insensitive() {
         assert!(matches_user(
-            "webhook-github/Dan-Hart",
+            "webhook-github/Octocat",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
         assert!(matches_user(
-            "webhook-github/dan-hart",
+            "webhook-github/octocat",
             "bitrise-user",
-            Some("Dan-Hart")
+            Some("Octocat")
         ));
     }
 
@@ -521,7 +562,7 @@ mod tests {
         assert!(!matches_user(
             "webhook-github/other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
@@ -529,7 +570,7 @@ mod tests {
     fn test_matches_user_no_github_username() {
         // Should fall back to Bitrise username matching
         assert!(!matches_user(
-            "webhook-github/dan-hart",
+            "webhook-github/octocat",
             "bitrise-user",
             None
         ));
@@ -540,24 +581,62 @@ mod tests {
         assert!(!matches_user(
             "webhook-github/other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
         assert!(!matches_user(
             "manual-other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
     #[test]
     fn test_matches_user_empty_triggered_by() {
-        assert!(!matches_user("", "bitrise-user", Some("dan-hart")));
+        assert!(!matches_user("", "bitrise-user", Some("octocat")));
     }
 
     #[test]
     fn test_matches_user_bitrise_match_takes_precedence() {
         // If Bitrise username matches, we don't need GitHub
         assert!(matches_user("manual-bitrise-user", "bitrise-user", None));
+    }
+
+    #[test]
+    fn test_latest_build_page_size_defaults_to_recent_window() {
+        assert_eq!(latest_build_page_size(None), 25);
+    }
+
+    #[test]
+    fn test_latest_build_page_size_expands_for_pr_filter() {
+        assert_eq!(latest_build_page_size(Some(1234)), 50);
+    }
+
+    #[test]
+    fn test_ensure_interactive_selection_allowed_rejects_json_output() {
+        let err =
+            ensure_interactive_selection_allowed(crate::cli::args::OutputFormat::Json, "build")
+                .unwrap_err();
+
+        assert!(matches!(err, RepriseError::InvalidArgument(_)));
+        assert!(err.to_string().contains("--output json"));
+    }
+
+    #[test]
+    fn test_windows_start_args_quote_the_url_and_set_empty_title() {
+        let args = windows_start_args("https://example.com/?a=1&b=2");
+
+        assert_eq!(
+            args,
+            vec!["/C", "start", "", "\"https://example.com/?a=1&b=2\""]
+        );
+    }
+
+    #[test]
+    fn test_linux_clipboard_candidates_support_multiple_argument_lengths() {
+        let candidates = linux_clipboard_candidates();
+
+        assert_eq!(candidates[0], &["xclip", "-selection", "clipboard"]);
+        assert_eq!(candidates[1], &["wl-copy"]);
     }
 
     #[test]
