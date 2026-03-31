@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use super::common::{is_interrupted, resolve_app_slug, setup_interrupt_handler};
+use super::common::{
+    is_interrupted, resolve_app_slug, resolve_build_slug, setup_interrupt_handler,
+};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{BuildArgs, OutputFormat};
 use crate::config::Config;
@@ -20,24 +22,43 @@ pub fn build(
 ) -> Result<String> {
     // Resolve app slug from args or config default
     let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+    let build_slug = resolve_build_slug(
+        client,
+        app_slug,
+        args.slug.as_deref(),
+        args.latest,
+        args.branch.as_deref(),
+        args.workflow.as_deref(),
+        args.status,
+        args.pr,
+        args.current_branch,
+        format,
+    )?;
 
     // Handle --follow: stream live log output
     if args.follow {
-        return follow_log(client, app_slug, &args.slug, args.interval, args.notify, format);
+        return follow_log(
+            client,
+            app_slug,
+            &build_slug,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     // Handle --logs: dump full log
     if args.logs {
-        return dump_log(client, app_slug, &args.slug, format);
+        return dump_log(client, app_slug, &build_slug, format);
     }
 
     // Handle --artifacts: list artifacts
     if args.artifacts {
-        return list_artifacts(client, app_slug, &args.slug, format);
+        return list_artifacts(client, app_slug, &build_slug, format);
     }
 
     // Default: show build details
-    let response = client.get_build(app_slug, &args.slug)?;
+    let response = client.get_build(app_slug, &build_slug)?;
     output::format_build(&response.data, format)
 }
 
@@ -96,10 +117,7 @@ fn follow_log(
     let interrupted = setup_interrupt_handler();
 
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Following build log (Ctrl+C to stop)...\n",
-            "->".cyan()
-        );
+        eprintln!("{} Following build log (Ctrl+C to stop)...\n", "->".cyan());
     }
 
     loop {

@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use super::common::{is_interrupted, setup_interrupt_handler};
+use super::common::{
+    current_git_branch, is_interrupted, resolve_app_slug, setup_interrupt_handler,
+};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{OutputFormat, TriggerArgs};
 use crate::config::Config;
@@ -19,19 +21,16 @@ pub fn trigger(
     format: OutputFormat,
 ) -> Result<String> {
     // Get app slug from args or default
-    let app_slug = args
-        .app
-        .as_ref()
-        .or(config.defaults.app_slug.as_ref())
-        .ok_or_else(|| {
-            crate::error::RepriseError::Config(
-                "No app specified. Use --app or set a default with 'reprise app set'".to_string(),
-            )
-        })?;
+    let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+    let branch = if args.current_branch {
+        Some(current_git_branch()?)
+    } else {
+        args.branch.clone()
+    };
 
     // Build trigger params
     let params = crate::bitrise::TriggerParams {
-        branch: args.branch.clone(),
+        branch,
         workflow_id: args.workflow.clone(),
         commit_message: args.message.clone(),
         environments: args.env.clone(),
@@ -50,15 +49,19 @@ pub fn trigger(
         eprintln!("  Slug:     {}", build.slug.dimmed());
         eprintln!("  Branch:   {}", build.branch);
         eprintln!("  Workflow: {}", build.triggered_workflow);
-        eprintln!(
-            "\nView at: https://app.bitrise.io/build/{}",
-            build.slug
-        );
+        eprintln!("\nView at: https://app.bitrise.io/build/{}", build.slug);
     }
 
     // Wait for build to complete if requested
     if args.wait {
-        return wait_for_build(client, app_slug, &build.slug, args.interval, args.notify, format);
+        return wait_for_build(
+            client,
+            app_slug,
+            &build.slug,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     match format {
@@ -83,14 +86,20 @@ fn wait_for_build(
     let interrupted = setup_interrupt_handler();
 
     if format == OutputFormat::Pretty {
-        eprintln!("\n{} Waiting for build to complete (Ctrl+C to stop)...", "->".cyan());
+        eprintln!(
+            "\n{} Waiting for build to complete (Ctrl+C to stop)...",
+            "->".cyan()
+        );
     }
 
     loop {
         // Check for interrupt
         if is_interrupted(&interrupted) {
             if format == OutputFormat::Pretty {
-                eprintln!("\n{} Interrupted - build continues in background", "!".yellow());
+                eprintln!(
+                    "\n{} Interrupted - build continues in background",
+                    "!".yellow()
+                );
                 eprintln!("  View at: https://app.bitrise.io/build/{}", build_slug);
             }
             return Ok(String::new());
