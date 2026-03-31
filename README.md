@@ -17,10 +17,14 @@ A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
 - **Easy authentication** - Inline token support via flag or environment variable
 - **Flexible output** - Pretty terminal output by default, JSON for automation
 - **Smart defaults** - Set a default app to skip repetitive flags
+- **Named profiles** - Switch between Bitrise contexts with profile-aware defaults
 - **Build management** - List, filter, and inspect builds with ease
 - **Pipeline support** - Full pipeline management including trigger, watch, abort, and rebuild
 - **Log viewing** - View, tail, follow, and save build logs with syntax highlighting
 - **Smart filtering** - Filter builds and pipelines by status, branch, workflow, or creator (`--me`)
+- **Saved views** - Re-run common build and pipeline filters by name
+- **Diagnosis and comparison** - Triage failures and compare two builds side by side
+- **Doctor command** - Validate config, git context, and API connectivity quickly
 - **URL integration** - Paste any Bitrise URL to instantly view status, logs, or artifacts
 - **Safe bitrise.yml updates** - Automatically backs up current config before every upload
 
@@ -120,12 +124,17 @@ reprise log abc123
 | `reprise pipeline watch <id>` | `p watch` | Watch pipeline progress |
 | `reprise pipeline abort <id>` | `p abort` | Abort a running pipeline |
 | `reprise pipeline rebuild <id>` | `p rebuild` | Rebuild a pipeline |
+| `reprise doctor` | | Validate config, token, git context, and API access |
+| `reprise diagnose <slug>` | | Triage a build failure or inspect the latest failing build |
+| `reprise compare <left> <right>` | | Compare two builds side by side |
+| `reprise view <subcommand>` | | Save, inspect, and run named build or pipeline views |
 | `reprise url <url>` | | Parse and interact with Bitrise URLs |
 | `reprise config init` | | Interactive configuration setup |
 | `reprise config show` | | Display current configuration |
 | `reprise config set` | | Set a configuration value |
 | `reprise config path` | | Show config file location |
 | `reprise config alias` | | Manage app aliases |
+| `reprise config profile` | | Manage named Bitrise profiles |
 | `reprise yml get` | | Fetch current bitrise.yml |
 | `reprise yml set --file <path>` | | Upload bitrise.yml with automatic pre-update backup |
 
@@ -158,6 +167,23 @@ format = "pretty"  # or "json"
 [aliases]
 ios = "abc123def456"
 android = "xyz789ghi012"
+
+active_profile = "work"
+
+[profiles.work.api]
+token = "your_work_token"
+
+[profiles.work.defaults]
+app_slug = "work-app"
+
+[profiles.work.output]
+format = "pretty"
+
+[views.failures]
+kind = "builds"
+status = "failed"
+branch = "main"
+since = "1d"
 ```
 
 ### App Aliases
@@ -180,6 +206,36 @@ reprise config alias ios
 
 # Remove an alias
 reprise config alias ios --remove
+```
+
+### Profiles
+
+Create named Bitrise contexts with their own token and default app:
+
+```bash
+# Create or update a profile
+reprise config profile work --token YOUR_TOKEN --app abc123def456
+
+# Switch to it
+reprise config profile work --use
+
+# List profiles
+reprise config profile
+```
+
+### Saved Views
+
+Store common filters and run them later:
+
+```bash
+# Save a "failed builds on main in the last day" view
+reprise view save failures --kind builds --status failed --branch main --since 1d
+
+# Inspect it
+reprise view show failures
+
+# Run it
+reprise view run failures
 ```
 
 ### Getting Your API Token

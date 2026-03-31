@@ -49,6 +49,8 @@ fn run() -> Result<(), RepriseError> {
     let output = match &cli.command {
         Commands::Completions(_) => unreachable!(), // Handled above
         Commands::Config(args) => commands::config(&mut config, args, format)?,
+        Commands::Doctor(args) => commands::doctor(&config, cli.token.as_deref(), args, format)?,
+        Commands::View(args) => commands::view(&mut config, cli.token.as_deref(), args, format)?,
 
         // app show doesn't need API client
         Commands::App(args) if matches!(args.command, None | Some(AppCommands::Show)) => {
@@ -76,7 +78,10 @@ fn run() -> Result<(), RepriseError> {
                 Commands::Pipelines(args) => commands::pipelines(&client, &config, args, format)?,
                 Commands::Pipeline(args) => commands::pipeline(&client, &config, args, format)?,
                 Commands::Yml(args) => commands::yml(&client, &config, args, format)?,
+                Commands::Diagnose(args) => commands::diagnose(&client, &config, args, format)?,
+                Commands::Compare(args) => commands::compare(&client, &config, args, format)?,
                 Commands::Config(_) | Commands::Completions(_) => unreachable!(),
+                Commands::Doctor(_) | Commands::View(_) => unreachable!(),
             }
         }
     };

@@ -96,7 +96,7 @@ impl BitriseClient {
         }
 
         let body = response.text()?;
-        serde_json::from_str(&body).map_err(|e| RepriseError::Json(e))
+        serde_json::from_str(&body).map_err(RepriseError::Json)
     }
 
     /// Make a GET request and return raw text

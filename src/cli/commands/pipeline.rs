@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
+use super::common::{resolve_app_slug, resolve_pipeline_id};
 use crate::bitrise::{BitriseClient, Pipeline, PipelineTriggerParams};
 use crate::cli::args::{OutputFormat, PipelineArgs, PipelineCommands};
 use crate::config::Config;
@@ -23,7 +24,7 @@ pub fn pipeline(
 ) -> Result<String> {
     match &args.command {
         Some(PipelineCommands::Show { id, app }) => {
-            pipeline_show(client, config, id, app.as_deref(), format)
+            pipeline_show(client, config, id.as_deref(), app.as_deref(), format)
         }
         Some(PipelineCommands::Trigger {
             name,
@@ -53,7 +54,7 @@ pub fn pipeline(
         }) => pipeline_abort(
             client,
             config,
-            id,
+            id.as_deref(),
             app.as_deref(),
             reason.as_deref(),
             *yes,
@@ -69,7 +70,7 @@ pub fn pipeline(
         }) => pipeline_rebuild(
             client,
             config,
-            id,
+            id.as_deref(),
             app.as_deref(),
             *partial,
             *wait,
@@ -82,11 +83,19 @@ pub fn pipeline(
             app,
             interval,
             notify,
-        }) => pipeline_watch(client, config, id, app.as_deref(), *interval, *notify, format),
+        }) => pipeline_watch(
+            client,
+            config,
+            id.as_deref(),
+            app.as_deref(),
+            *interval,
+            *notify,
+            format,
+        ),
         None => {
             // If no subcommand but ID provided, show pipeline details
             if let Some(ref id) = args.id {
-                pipeline_show(client, config, id, None, format)
+                pipeline_show(client, config, Some(id), None, format)
             } else {
                 Err(RepriseError::InvalidArgument(
                     "Please provide a pipeline ID or use a subcommand (trigger, abort, rebuild, watch)".to_string(),
@@ -100,15 +109,14 @@ pub fn pipeline(
 fn pipeline_show(
     client: &BitriseClient,
     config: &Config,
-    pipeline_id: &str,
+    pipeline_id: Option<&str>,
     app: Option<&str>,
     format: OutputFormat,
 ) -> Result<String> {
-    let app_slug = app
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(app, config)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
 
-    let response = client.get_pipeline(app_slug, pipeline_id)?;
+    let response = client.get_pipeline(app_slug, &pipeline_id)?;
     output::format_pipeline(&response.into_pipeline(), format)
 }
 
@@ -140,10 +148,7 @@ fn pipeline_trigger(
 
     // Print initial status (to stderr so stdout can be piped)
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Pipeline triggered",
-            "✓".green(),
-        );
+        eprintln!("{} Pipeline triggered", "✓".green(),);
         eprintln!("  ID:       {}", pipeline.id.dimmed());
         eprintln!("  Pipeline: {}", pipeline.pipeline_id);
         let branch = pipeline.get_branch();
@@ -181,15 +186,14 @@ fn pipeline_trigger(
 fn pipeline_abort(
     client: &BitriseClient,
     config: &Config,
-    pipeline_id: &str,
+    pipeline_id: Option<&str>,
     app: Option<&str>,
     reason: Option<&str>,
     skip_confirmation: bool,
     format: OutputFormat,
 ) -> Result<String> {
-    let app_slug = app
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(app, config)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
 
     // Confirm unless --yes flag is provided
     if !skip_confirmation {
@@ -207,16 +211,14 @@ fn pipeline_abort(
         }
     }
 
-    client.abort_pipeline(app_slug, pipeline_id, reason)?;
+    client.abort_pipeline(app_slug, &pipeline_id, reason)?;
 
     match format {
-        OutputFormat::Pretty => {
-            Ok(format!(
-                "{} Pipeline {} aborted",
-                "✓".green(),
-                pipeline_id.bold()
-            ))
-        }
+        OutputFormat::Pretty => Ok(format!(
+            "{} Pipeline {} aborted",
+            "✓".green(),
+            pipeline_id.bold()
+        )),
         OutputFormat::Json => {
             let result = serde_json::json!({
                 "status": "aborted",
@@ -232,7 +234,7 @@ fn pipeline_abort(
 fn pipeline_rebuild(
     client: &BitriseClient,
     config: &Config,
-    pipeline_id: &str,
+    pipeline_id: Option<&str>,
     app: Option<&str>,
     partial: bool,
     wait: bool,
@@ -240,20 +242,19 @@ fn pipeline_rebuild(
     interval_secs: u64,
     format: OutputFormat,
 ) -> Result<String> {
-    let app_slug = app
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(app, config)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
 
-    let pipeline = client.rebuild_pipeline(app_slug, pipeline_id, partial)?;
+    let pipeline = client.rebuild_pipeline(app_slug, &pipeline_id, partial)?;
 
     // Print initial status (to stderr so stdout can be piped)
     if format == OutputFormat::Pretty {
-        let rebuild_type = if partial { "partial rebuild" } else { "full rebuild" };
-        eprintln!(
-            "{} Pipeline {} triggered",
-            "✓".green(),
-            rebuild_type
-        );
+        let rebuild_type = if partial {
+            "partial rebuild"
+        } else {
+            "full rebuild"
+        };
+        eprintln!("{} Pipeline {} triggered", "✓".green(), rebuild_type);
         eprintln!("  ID:       {}", pipeline.id.dimmed());
         eprintln!("  Pipeline: {}", pipeline.pipeline_id);
         eprintln!(
@@ -287,25 +288,28 @@ fn pipeline_rebuild(
 fn pipeline_watch(
     client: &BitriseClient,
     config: &Config,
-    pipeline_id: &str,
+    pipeline_id: Option<&str>,
     app: Option<&str>,
     interval_secs: u64,
     send_notification: bool,
     format: OutputFormat,
 ) -> Result<String> {
-    let app_slug = app
-        .map(Ok)
-        .unwrap_or_else(|| config.require_default_app())?;
+    let app_slug = resolve_app_slug(app, config)?;
+    let pipeline_id = resolve_pipeline_id(client, app_slug, pipeline_id, None, false)?;
 
     // Initial display
     if format == OutputFormat::Pretty {
-        eprintln!("{} Watching pipeline {} (Ctrl+C to stop)...", "->".cyan(), pipeline_id);
+        eprintln!(
+            "{} Watching pipeline {} (Ctrl+C to stop)...",
+            "->".cyan(),
+            pipeline_id
+        );
     }
 
     wait_for_pipeline(
         client,
         app_slug,
-        pipeline_id,
+        &pipeline_id,
         interval_secs,
         send_notification,
         format,
@@ -325,8 +329,7 @@ fn get_pipeline_with_retry(
             Ok(response) => return Ok(response.into_pipeline()),
             Err(e) => {
                 // Only retry on 5xx server errors
-                let should_retry =
-                    matches!(&e, RepriseError::Api { status, .. } if *status >= 500);
+                let should_retry = matches!(&e, RepriseError::Api { status, .. } if *status >= 500);
 
                 if should_retry && attempt < max_retries {
                     attempt += 1;
@@ -365,6 +368,8 @@ fn wait_for_pipeline(
         );
     }
 
+    let mut last_snapshot = String::new();
+
     loop {
         // Check for interrupt
         if interrupted.load(Ordering::SeqCst) {
@@ -384,6 +389,14 @@ fn wait_for_pipeline(
         thread::sleep(Duration::from_secs(interval_secs));
 
         let pipeline = get_pipeline_with_retry(client, app_slug, pipeline_id, 5)?;
+
+        if format == OutputFormat::Pretty {
+            let snapshot = pipeline_progress_snapshot(&pipeline);
+            if snapshot != last_snapshot {
+                eprintln!("  {}", snapshot);
+                last_snapshot = snapshot;
+            }
+        }
 
         if !pipeline.is_running() {
             // Pipeline finished
@@ -430,20 +443,29 @@ fn wait_for_pipeline(
             };
         }
 
-        // Still running - show progress
-        if format == OutputFormat::Pretty {
-            eprint!(".");
-        }
+        // Still running; progress updates are emitted when the snapshot changes.
     }
 }
 
 /// Send desktop notification when pipeline completes
 fn notify_pipeline_completed(pipeline: &crate::bitrise::Pipeline) {
     let (title, body) = match pipeline.status {
-        1 => ("Pipeline Succeeded", format!("Pipeline {} completed successfully", pipeline.pipeline_id)),
-        2 => ("Pipeline Failed", format!("Pipeline {} failed", pipeline.pipeline_id)),
-        3 => ("Pipeline Aborted", format!("Pipeline {} was aborted", pipeline.pipeline_id)),
-        _ => ("Pipeline Finished", format!("Pipeline {} finished", pipeline.pipeline_id)),
+        1 => (
+            "Pipeline Succeeded",
+            format!("Pipeline {} completed successfully", pipeline.pipeline_id),
+        ),
+        2 => (
+            "Pipeline Failed",
+            format!("Pipeline {} failed", pipeline.pipeline_id),
+        ),
+        3 => (
+            "Pipeline Aborted",
+            format!("Pipeline {} was aborted", pipeline.pipeline_id),
+        ),
+        _ => (
+            "Pipeline Finished",
+            format!("Pipeline {} finished", pipeline.pipeline_id),
+        ),
     };
 
     if let Err(e) = notify_rust::Notification::new()
@@ -454,4 +476,27 @@ fn notify_pipeline_completed(pipeline: &crate::bitrise::Pipeline) {
     {
         eprintln!("Failed to send notification: {}", e);
     }
+}
+
+fn pipeline_progress_snapshot(pipeline: &Pipeline) -> String {
+    let total = pipeline.workflows.len();
+    let succeeded = pipeline
+        .workflows
+        .iter()
+        .filter(|workflow| workflow.status == 1)
+        .count();
+    let failed = pipeline
+        .workflows
+        .iter()
+        .filter(|workflow| workflow.status == 2)
+        .count();
+    format!(
+        "status={} branch={} duration={} workflows={}/{} failed={}",
+        pipeline.status_display(),
+        pipeline.get_branch(),
+        pipeline.duration_display(),
+        succeeded,
+        total,
+        failed
+    )
 }

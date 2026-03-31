@@ -1,6 +1,6 @@
 //! List pipelines command
 
-use super::common::{get_github_username, matches_user, resolve_app_slug};
+use super::common::{current_git_branch, get_github_username, matches_user, resolve_app_slug};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{OutputFormat, PipelinesArgs};
 use crate::config::Config;
@@ -42,6 +42,11 @@ pub fn pipelines(
     };
 
     let triggered_by_filter = args.triggered_by.clone();
+    let branch_filter = if args.current_branch {
+        Some(current_git_branch()?)
+    } else {
+        args.branch.clone()
+    };
 
     // Status filter needs to be applied client-side (API doesn't support it)
     let status_filter = args.status.map(|s| s.to_api_code());
@@ -59,16 +64,12 @@ pub fn pipelines(
     let response = client.list_pipelines(
         app_slug,
         None, // Status filtering not supported by API, filter client-side
-        args.branch.as_deref(),
+        branch_filter.as_deref(),
         fetch_limit,
     )?;
 
     // Parse --since threshold if provided
-    let since_threshold = args
-        .since
-        .as_ref()
-        .map(|s| parse_since(s))
-        .transpose()?;
+    let since_threshold = args.since.as_ref().map(|s| parse_since(s)).transpose()?;
 
     // Apply filters client-side
     let pipelines: Vec<_> = response

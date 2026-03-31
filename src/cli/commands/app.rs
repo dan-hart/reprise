@@ -1,5 +1,6 @@
 use colored::Colorize;
 
+use super::common::resolve_app_from_identifier;
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{AppArgs, AppCommands, OutputFormat};
 use crate::config::Config;
@@ -14,20 +15,15 @@ pub fn app_set(
 ) -> Result<String> {
     // Extract the app identifier from the Set command
     let app_identifier = match &args.command {
-        Some(AppCommands::Set { app }) => app.as_str(),
-        _ => return Err(RepriseError::InvalidArgument("Expected app set command".into())),
-    };
-
-    // Try to get the app - first as a slug, then search by name
-    let app = match client.get_app(app_identifier) {
-        Ok(response) => response.data,
-        Err(_) => {
-            // Try to find by name
-            client
-                .find_app_by_name(app_identifier)?
-                .ok_or_else(|| RepriseError::AppNotFound(app_identifier.to_string()))?
+        Some(AppCommands::Set { app }) => app.as_deref(),
+        _ => {
+            return Err(RepriseError::InvalidArgument(
+                "Expected app set command".into(),
+            ))
         }
     };
+
+    let app = resolve_app_from_identifier(client, app_identifier)?;
 
     // Update config
     config.set_default_app(app.slug.clone(), Some(app.title.clone()));
@@ -53,7 +49,7 @@ pub fn app_set(
 
 /// Show the current default app
 pub fn app_show(config: &Config, format: OutputFormat) -> Result<String> {
-    match (&config.defaults.app_slug, &config.defaults.app_name) {
+    match (config.require_default_app().ok(), config.default_app_name()) {
         (Some(slug), Some(name)) => match format {
             OutputFormat::Pretty => Ok(format!(
                 "{}: {} ({})",
