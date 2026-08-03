@@ -27,7 +27,7 @@ fn test_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("reprise"));
+        .stdout(predicate::str::diff("reprise 0.1.10\n"));
 }
 
 #[test]
@@ -51,6 +51,17 @@ fn test_builds_help() {
         .stdout(predicate::str::contains("--status"))
         .stdout(predicate::str::contains("--branch"))
         .stdout(predicate::str::contains("--workflow"));
+}
+
+#[test]
+fn test_builds_timing_flags_are_documented() {
+    reprise()
+        .args(["builds", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--elapsed"))
+        .stdout(predicate::str::contains("--average"))
+        .stdout(predicate::str::contains("--progress"));
 }
 
 #[test]

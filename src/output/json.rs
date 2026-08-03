@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::bitrise::{App, Artifact, Build, Pipeline};
 use crate::error::Result;
+use crate::output::{BuildTiming, TimingOptions};
 
 /// Format apps as JSON
 pub fn format_apps(apps: &[App]) -> Result<String> {
@@ -16,6 +17,51 @@ pub fn format_app(app: &App) -> Result<String> {
 /// Format builds as JSON
 pub fn format_builds(builds: &[Build]) -> Result<String> {
     Ok(serde_json::to_string_pretty(builds)?)
+}
+
+/// Format builds with selected timing metrics while preserving the build array shape.
+pub(crate) fn format_builds_with_timing(
+    builds: &[Build],
+    timings: &[BuildTiming],
+    options: TimingOptions,
+) -> Result<String> {
+    let values: Vec<serde_json::Value> = builds
+        .iter()
+        .enumerate()
+        .map(|(index, build)| {
+            let mut value = serde_json::to_value(build)?;
+            let timing = timings.get(index).copied().unwrap_or_default();
+
+            if let Some(object) = value.as_object_mut() {
+                if options.elapsed {
+                    object.insert(
+                        "elapsed_seconds".to_string(),
+                        serde_json::to_value(
+                            timing.elapsed.map(|duration| duration.num_seconds()),
+                        )?,
+                    );
+                }
+                if options.average {
+                    object.insert(
+                        "average_seconds".to_string(),
+                        serde_json::to_value(
+                            timing.average.map(|duration| duration.num_seconds()),
+                        )?,
+                    );
+                }
+                if options.progress {
+                    object.insert(
+                        "progress_percent".to_string(),
+                        serde_json::to_value(timing.progress_percent)?,
+                    );
+                }
+            }
+
+            Ok(value)
+        })
+        .collect::<Result<_>>()?;
+
+    Ok(serde_json::to_string_pretty(&values)?)
 }
 
 /// Format a single build as JSON
@@ -200,6 +246,30 @@ mod tests {
         let result = format_builds(&builds).unwrap();
         assert!(result.contains("\"slug\": \"build-slug\""));
         assert!(result.contains("\"build_number\": 456"));
+    }
+
+    #[test]
+    fn test_format_timed_builds_includes_selected_timing_fields() {
+        let builds = vec![make_test_build("build-slug", 456)];
+        let result = format_builds_with_timing(
+            &builds,
+            &[crate::output::BuildTiming {
+                elapsed: Some(chrono::Duration::seconds(30)),
+                average: Some(chrono::Duration::seconds(60)),
+                progress_percent: Some(50),
+            }],
+            crate::output::TimingOptions {
+                elapsed: true,
+                average: true,
+                progress: true,
+            },
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(parsed[0]["elapsed_seconds"], 30);
+        assert_eq!(parsed[0]["average_seconds"], 60);
+        assert_eq!(parsed[0]["progress_percent"], 50);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

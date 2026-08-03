@@ -113,6 +113,9 @@ Examples:
   reprise builds --pr 1234        Show builds for PR #1234
   reprise builds --limit 50       Show more builds
   reprise builds --app other-app  Use different app
+  reprise builds --elapsed        Show running worker time
+  reprise builds --average        Show workflow duration averages
+  reprise builds --progress       Show running build progress estimates
   reprise builds -o json          Output as JSON
 
 Filtering:
@@ -275,6 +278,7 @@ Parse URL Examples:
   reprise url https://app.bitrise.io/app/xyz/pipelines/123  Show pipeline status
   reprise url <url> --browser                                Open URL in browser
   reprise url <url> --watch                                  Watch build/pipeline progress
+  reprise url <url> --watch --notify                         Watch with notification
 
 Generate URL Examples:
   reprise url --build abc123                  Generate build URL
@@ -301,7 +305,8 @@ App URL Actions:
 Tips:
   Copy a URL from Bitrise and paste it here to quickly view status,
   check logs, abort, retry, or download artifacts without setting up app context.
-  Use --watch to monitor a running build until completion.")]
+  Use --watch to monitor a running build until completion. Add --notify
+  to receive a desktop notification when the build or pipeline completes.")]
     Url(UrlArgs),
 
     /// List pipelines for the default or specified app
@@ -515,6 +520,18 @@ pub struct BuildsArgs {
     /// Maximum number of builds to return
     #[arg(short, long, default_value = "25", value_name = "N")]
     pub limit: u32,
+
+    /// Show elapsed worker time for running builds
+    #[arg(long)]
+    pub elapsed: bool,
+
+    /// Show average duration for each workflow from recent completed builds
+    #[arg(long)]
+    pub average: bool,
+
+    /// Show estimated progress for running builds from workflow averages
+    #[arg(long)]
+    pub progress: bool,
 
     /// Watch mode - continuously refresh the build list
     #[arg(long)]
