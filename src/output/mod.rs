@@ -1,10 +1,10 @@
 pub mod json;
 pub mod pretty;
 
-use chrono::Duration;
 use crate::bitrise::{App, Artifact, Build, Pipeline};
 use crate::cli::OutputFormat;
 use crate::error::Result;
+use chrono::Duration;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct BuildTiming {

@@ -476,7 +476,11 @@ mod tests {
     // Test Helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn make_build(status: i32, started: Option<DateTime<Utc>>, finished: Option<DateTime<Utc>>) -> Build {
+    fn make_build(
+        status: i32,
+        started: Option<DateTime<Utc>>,
+        finished: Option<DateTime<Utc>>,
+    ) -> Build {
         Build {
             slug: "test-slug".to_string(),
             triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
@@ -517,7 +521,11 @@ mod tests {
         assert_eq!(build.elapsed_at(now).unwrap(), chrono::Duration::zero());
     }
 
-    fn make_pipeline(status: i32, started: Option<DateTime<Utc>>, finished: Option<DateTime<Utc>>) -> Pipeline {
+    fn make_pipeline(
+        status: i32,
+        started: Option<DateTime<Utc>>,
+        finished: Option<DateTime<Utc>>,
+    ) -> Pipeline {
         Pipeline {
             id: "test-id".to_string(),
             app_slug: "test-app".to_string(),

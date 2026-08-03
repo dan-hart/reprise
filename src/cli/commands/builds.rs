@@ -1,5 +1,5 @@
-use std::io::{self, Write};
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -20,9 +20,10 @@ fn workflow_averages(history: &[crate::bitrise::Build]) -> HashMap<String, chron
     let mut totals: HashMap<String, (chrono::Duration, i32)> = HashMap::new();
 
     for build in history {
-        if let Some(duration) = build.duration().filter(|duration| {
-            !build.is_running() && *duration >= chrono::Duration::zero()
-        }) {
+        if let Some(duration) = build
+            .duration()
+            .filter(|duration| !build.is_running() && *duration >= chrono::Duration::zero())
+        {
             let entry = totals
                 .entry(build.triggered_workflow.clone())
                 .or_insert((chrono::Duration::zero(), 0));
@@ -207,11 +208,7 @@ fn fetch_and_format_builds(
     };
 
     // Parse --since threshold if provided
-    let since_threshold = args
-        .since
-        .as_ref()
-        .map(|s| parse_since(s))
-        .transpose()?;
+    let since_threshold = args.since.as_ref().map(|s| parse_since(s)).transpose()?;
 
     // Apply client-side filters
     let workflow_contains_lower = args.workflow_contains.as_ref().map(|s| s.to_lowercase());
@@ -231,16 +228,12 @@ fn fetch_and_format_builds(
                     .unwrap_or(false)
             })
             .filter(|b| {
-                workflow_contains_lower.as_ref().is_none_or(|pattern| {
-                    b.triggered_workflow.to_lowercase().contains(pattern)
-                })
+                workflow_contains_lower
+                    .as_ref()
+                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
             })
-            .filter(|b| {
-                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
-            })
-            .filter(|b| {
-                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
-            })
+            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
+            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
             .take(args.limit as usize)
             .collect()
     } else if let Some(ref user) = triggered_by_filter {
@@ -256,31 +249,25 @@ fn fetch_and_format_builds(
                     .unwrap_or(false)
             })
             .filter(|b| {
-                workflow_contains_lower.as_ref().is_none_or(|pattern| {
-                    b.triggered_workflow.to_lowercase().contains(pattern)
-                })
+                workflow_contains_lower
+                    .as_ref()
+                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
             })
-            .filter(|b| {
-                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
-            })
-            .filter(|b| {
-                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
-            })
+            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
+            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
             .take(args.limit as usize)
             .collect()
     } else {
-        response.data.into_iter()
+        response
+            .data
+            .into_iter()
             .filter(|b| {
-                workflow_contains_lower.as_ref().is_none_or(|pattern| {
-                    b.triggered_workflow.to_lowercase().contains(pattern)
-                })
+                workflow_contains_lower
+                    .as_ref()
+                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
             })
-            .filter(|b| {
-                since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
-            })
-            .filter(|b| {
-                pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num))
-            })
+            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
+            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
             .take(args.limit as usize)
             .collect()
     };
@@ -313,11 +300,15 @@ fn fetch_and_format_builds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
     use crate::bitrise::Build;
+    use chrono::{TimeZone, Utc};
     use mockito::Server;
 
-    fn build(workflow: &str, started_at: Option<chrono::DateTime<Utc>>, finished_at: Option<chrono::DateTime<Utc>>) -> Build {
+    fn build(
+        workflow: &str,
+        started_at: Option<chrono::DateTime<Utc>>,
+        finished_at: Option<chrono::DateTime<Utc>>,
+    ) -> Build {
         Build {
             slug: "build".to_string(),
             triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
@@ -373,8 +364,16 @@ mod tests {
     fn workflow_averages_uses_completed_durations_only() {
         let start = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
         let history = vec![
-            build("primary", Some(start), Some(start + chrono::Duration::seconds(60))),
-            build("primary", Some(start), Some(start + chrono::Duration::seconds(120))),
+            build(
+                "primary",
+                Some(start),
+                Some(start + chrono::Duration::seconds(60)),
+            ),
+            build(
+                "primary",
+                Some(start),
+                Some(start + chrono::Duration::seconds(120)),
+            ),
             build("primary", Some(start), None),
         ];
 

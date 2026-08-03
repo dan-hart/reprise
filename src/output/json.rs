@@ -36,13 +36,17 @@ pub(crate) fn format_builds_with_timing(
                 if options.elapsed {
                     object.insert(
                         "elapsed_seconds".to_string(),
-                        serde_json::to_value(timing.elapsed.map(|duration| duration.num_seconds()))?,
+                        serde_json::to_value(
+                            timing.elapsed.map(|duration| duration.num_seconds()),
+                        )?,
                     );
                 }
                 if options.average {
                     object.insert(
                         "average_seconds".to_string(),
-                        serde_json::to_value(timing.average.map(|duration| duration.num_seconds()))?,
+                        serde_json::to_value(
+                            timing.average.map(|duration| duration.num_seconds()),
+                        )?,
                     );
                 }
                 if options.progress {
