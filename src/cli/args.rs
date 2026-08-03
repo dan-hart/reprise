@@ -276,6 +276,7 @@ Parse URL Examples:
   reprise url https://app.bitrise.io/app/xyz/pipelines/123  Show pipeline status
   reprise url <url> --browser                                Open URL in browser
   reprise url <url> --watch                                  Watch build/pipeline progress
+  reprise url <url> --watch --notify                         Watch with notification
 
 Generate URL Examples:
   reprise url --build abc123                  Generate build URL
@@ -302,7 +303,8 @@ App URL Actions:
 Tips:
   Copy a URL from Bitrise and paste it here to quickly view status,
   check logs, abort, retry, or download artifacts without setting up app context.
-  Use --watch to monitor a running build until completion.")]
+  Use --watch to monitor a running build until completion. Add --notify
+  to receive a desktop notification when the build or pipeline completes.")]
     Url(UrlArgs),
 
     /// List pipelines for the default or specified app

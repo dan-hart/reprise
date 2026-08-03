@@ -99,6 +99,11 @@ reprise builds --elapsed
 reprise builds --average
 reprise builds --progress
 
+# Receive a desktop notification when a build, workflow, or pipeline completes
+reprise build abc123 --follow --notify
+reprise trigger --workflow primary --wait --notify
+reprise pipeline watch abc123 --notify
+
 # View a specific build
 reprise build abc123
 
