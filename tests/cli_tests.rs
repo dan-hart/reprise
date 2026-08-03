@@ -329,9 +329,55 @@ fn test_build_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("build"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--current-branch"))
         .stdout(predicate::str::contains("--follow"))
         .stdout(predicate::str::contains("--logs"))
         .stdout(predicate::str::contains("--artifacts"));
+}
+
+#[test]
+fn test_doctor_help() {
+    reprise()
+        .args(["doctor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("diagnostics"))
+        .stdout(predicate::str::contains("profile"))
+        .stdout(predicate::str::contains("token"));
+}
+
+#[test]
+fn test_diagnose_help() {
+    reprise()
+        .args(["diagnose", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Diagnose"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--current-branch"));
+}
+
+#[test]
+fn test_compare_help() {
+    reprise()
+        .args(["compare", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Compare"))
+        .stdout(predicate::str::contains("LEFT"))
+        .stdout(predicate::str::contains("RIGHT"));
+}
+
+#[test]
+fn test_view_help() {
+    reprise()
+        .args(["view", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("saved views"))
+        .stdout(predicate::str::contains("save"))
+        .stdout(predicate::str::contains("run"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -348,30 +394,34 @@ fn test_abort_requires_build_slug() {
 }
 
 #[test]
-fn test_build_requires_build_slug() {
+fn test_build_supports_latest_targeting() {
     reprise()
-        .arg("build")
+        .args(["build", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("SLUG"));
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--current-branch"));
 }
 
 #[test]
-fn test_log_requires_build_slug() {
+fn test_log_supports_latest_targeting() {
     reprise()
-        .arg("log")
+        .args(["log", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("SLUG"));
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--current-branch"));
 }
 
 #[test]
-fn test_artifacts_requires_build_slug() {
+fn test_artifacts_supports_latest_targeting() {
     reprise()
-        .arg("artifacts")
+        .args(["artifacts", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("SLUG"));
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--open"))
+        .stdout(predicate::str::contains("--copy-url"));
 }
 
 #[test]
@@ -384,12 +434,12 @@ fn test_url_requires_url_arg() {
 }
 
 #[test]
-fn test_pipeline_show_requires_id() {
+fn test_pipeline_show_supports_picker_flow() {
     reprise()
-        .args(["pipeline", "show"])
+        .args(["pipeline", "show", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("ID"));
+        .success()
+        .stdout(predicate::str::contains("Pipeline ID"));
 }
 
 #[test]
@@ -402,30 +452,30 @@ fn test_pipeline_trigger_requires_name() {
 }
 
 #[test]
-fn test_pipeline_abort_requires_id() {
+fn test_pipeline_abort_supports_picker_flow() {
     reprise()
-        .args(["pipeline", "abort"])
+        .args(["pipeline", "abort", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("ID"));
+        .success()
+        .stdout(predicate::str::contains("Pipeline ID"));
 }
 
 #[test]
-fn test_pipeline_rebuild_requires_id() {
+fn test_pipeline_rebuild_supports_picker_flow() {
     reprise()
-        .args(["pipeline", "rebuild"])
+        .args(["pipeline", "rebuild", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("ID"));
+        .success()
+        .stdout(predicate::str::contains("Pipeline ID"));
 }
 
 #[test]
-fn test_pipeline_watch_requires_id() {
+fn test_pipeline_watch_supports_picker_flow() {
     reprise()
-        .args(["pipeline", "watch"])
+        .args(["pipeline", "watch", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("ID"));
+        .success()
+        .stdout(predicate::str::contains("Pipeline ID"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,12 +501,12 @@ fn test_config_set_requires_value() {
 }
 
 #[test]
-fn test_app_set_requires_app_arg() {
+fn test_app_set_help_supports_picker_flow() {
     reprise()
-        .args(["app", "set"])
+        .args(["app", "set", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("APP"));
+        .success()
+        .stdout(predicate::str::contains("App slug or name"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

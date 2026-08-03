@@ -138,6 +138,8 @@ Examples:
   reprise build abc123            Show build details
   reprise build abc123 -o json    Output as JSON
   reprise build abc123 --app xyz  Specify app explicitly
+  reprise build --latest --status failed
+  reprise build --latest --current-branch
   reprise build abc123 --follow   Stream live log output
   reprise build abc123 -f --notify  Follow with desktop notification
   reprise build abc123 --logs     Dump the full build log
@@ -362,6 +364,48 @@ Use 'reprise pipeline <subcommand> --help' for subcommand details."
     )]
     Pipeline(PipelineArgs),
 
+    /// Run environment and configuration diagnostics
+    #[command(after_help = "\
+Examples:
+  reprise doctor
+  reprise doctor -o json
+
+Checks configuration, active profile, token availability, default app,
+git context, and API connectivity when credentials are present.")]
+    Doctor(DoctorArgs),
+
+    /// Diagnose a failed or suspicious build
+    #[command(after_help = "\
+Examples:
+  reprise diagnose abc123
+  reprise diagnose --latest --status failed
+  reprise diagnose --latest --current-branch
+
+Diagnosis includes build metadata, likely failure signals, artifact
+context, and suggested next commands.")]
+    Diagnose(DiagnoseArgs),
+
+    /// Compare two builds side by side
+    #[command(after_help = "\
+Examples:
+  reprise compare abc123 def456
+  reprise compare abc123 def456 --app my-app
+
+Comparison highlights differences in status, duration, branch,
+workflow, commit, trigger source, pull request, and artifacts.")]
+    Compare(CompareArgs),
+
+    /// Manage saved views for builds and pipelines
+    #[command(after_help = "\
+Examples:
+  reprise view list
+  reprise view save failures --kind builds --status failed --branch main
+  reprise view run failures
+  reprise view remove failures
+
+Saved views let you persist common filters and re-run them quickly.")]
+    View(ViewArgs),
+
     /// Generate shell completions
     #[command(after_help = "\
 Examples:
@@ -416,7 +460,7 @@ commands like 'builds', 'trigger', and 'log' when no
 --app flag is provided.")]
     Set {
         /// App slug or name to set as default
-        app: String,
+        app: Option<String>,
     },
 
     /// Show the currently configured default app
@@ -444,6 +488,10 @@ pub struct BuildsArgs {
     /// Filter by branch name (exact match)
     #[arg(short, long)]
     pub branch: Option<String>,
+
+    /// Use the current git branch as the branch filter
+    #[arg(long, conflicts_with = "branch")]
+    pub current_branch: bool,
 
     /// Filter by workflow name (exact match)
     #[arg(short, long)]
@@ -519,16 +567,48 @@ impl BuildStatusFilter {
     }
 }
 
+/// Saved view target type
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewKindArg {
+    Builds,
+    Pipelines,
+}
+
 /// Arguments for the build command
 #[derive(Args)]
 pub struct BuildArgs {
     /// Build slug (unique ID from Bitrise URL or 'builds' output)
     #[arg(value_name = "SLUG")]
-    pub slug: String,
+    pub slug: Option<String>,
 
     /// App slug (overrides default)
     #[arg(short, long)]
     pub app: Option<String>,
+
+    /// Resolve the target build from the latest build matching the supplied filters
+    #[arg(long)]
+    pub latest: bool,
+
+    /// Filter latest resolution by branch name
+    #[arg(short, long, requires = "latest")]
+    pub branch: Option<String>,
+
+    /// Filter latest resolution by workflow name
+    #[arg(short, long, requires = "latest")]
+    pub workflow: Option<String>,
+
+    /// Filter latest resolution by status
+    #[arg(short, long, value_enum, requires = "latest")]
+    pub status: Option<BuildStatusFilter>,
+
+    /// Filter latest resolution by pull request number
+    #[arg(long, value_name = "NUMBER", requires = "latest")]
+    pub pr: Option<i64>,
+
+    /// Resolve branch from the current git checkout
+    #[arg(long, conflicts_with = "branch", requires = "latest")]
+    pub current_branch: bool,
 
     /// Stream live log output for running builds
     #[arg(short, long, conflicts_with_all = ["logs", "artifacts"])]
@@ -556,11 +636,35 @@ pub struct BuildArgs {
 pub struct LogArgs {
     /// Build slug (unique ID from Bitrise URL or 'builds' output)
     #[arg(value_name = "SLUG")]
-    pub slug: String,
+    pub slug: Option<String>,
 
     /// App slug (overrides default)
     #[arg(short, long)]
     pub app: Option<String>,
+
+    /// Resolve the target build from the latest build matching the supplied filters
+    #[arg(long)]
+    pub latest: bool,
+
+    /// Filter latest resolution by branch name
+    #[arg(short, long, requires = "latest")]
+    pub branch: Option<String>,
+
+    /// Filter latest resolution by workflow name
+    #[arg(short, long, requires = "latest")]
+    pub workflow: Option<String>,
+
+    /// Filter latest resolution by status
+    #[arg(short, long, value_enum, requires = "latest")]
+    pub status: Option<BuildStatusFilter>,
+
+    /// Filter latest resolution by pull request number
+    #[arg(long, value_name = "NUMBER", requires = "latest")]
+    pub pr: Option<i64>,
+
+    /// Resolve branch from the current git checkout
+    #[arg(long, conflicts_with = "branch", requires = "latest")]
+    pub current_branch: bool,
 
     /// Show only last N lines of the log
     #[arg(short, long, value_name = "LINES")]
@@ -724,6 +828,39 @@ Aliases are stored in ~/.reprise/config.toml under [aliases].")]
         #[arg(short, long)]
         remove: bool,
     },
+
+    /// Manage named Bitrise profiles
+    #[command(after_help = "\
+Examples:
+  reprise config profile                   List profiles
+  reprise config profile work --use        Switch to 'work'
+  reprise config profile work --token XXX  Create/update a profile
+  reprise config profile work --app abc123 Set default app for a profile
+  reprise config profile work --remove     Delete a profile")]
+    Profile {
+        /// Profile name. Omit to list all profiles.
+        name: Option<String>,
+
+        /// API token for the profile
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Default app slug for the profile
+        #[arg(long)]
+        app: Option<String>,
+
+        /// Output format preference for the profile
+        #[arg(long, value_enum)]
+        format: Option<OutputFormat>,
+
+        /// Switch to this profile
+        #[arg(long)]
+        r#use: bool,
+
+        /// Remove this profile
+        #[arg(short, long)]
+        remove: bool,
+    },
 }
 
 /// Arguments for the trigger command
@@ -736,6 +873,10 @@ pub struct TriggerArgs {
     /// Branch to build (defaults to repo's default branch)
     #[arg(short, long)]
     pub branch: Option<String>,
+
+    /// Use the current git branch for the build
+    #[arg(long, conflicts_with = "branch")]
+    pub current_branch: bool,
 
     /// App slug (overrides default)
     #[arg(short, long)]
@@ -767,15 +908,47 @@ pub struct TriggerArgs {
 pub struct ArtifactsArgs {
     /// Build slug (unique ID from Bitrise URL or 'builds' output)
     #[arg(value_name = "SLUG")]
-    pub slug: String,
+    pub slug: Option<String>,
 
     /// App slug (overrides default)
     #[arg(short, long)]
     pub app: Option<String>,
 
+    /// Resolve the target build from the latest build matching the supplied filters
+    #[arg(long)]
+    pub latest: bool,
+
+    /// Filter latest resolution by branch name
+    #[arg(short, long, requires = "latest")]
+    pub branch: Option<String>,
+
+    /// Filter latest resolution by workflow name
+    #[arg(short, long, requires = "latest")]
+    pub workflow: Option<String>,
+
+    /// Filter latest resolution by status
+    #[arg(short, long, value_enum, requires = "latest")]
+    pub status: Option<BuildStatusFilter>,
+
+    /// Filter latest resolution by pull request number
+    #[arg(long, value_name = "NUMBER", requires = "latest")]
+    pub pr: Option<i64>,
+
+    /// Resolve branch from the current git checkout
+    #[arg(long, conflicts_with = "branch", requires = "latest")]
+    pub current_branch: bool,
+
     /// Download artifacts to directory (current dir if no path given)
     #[arg(short, long, value_hint = ValueHint::DirPath, value_name = "DIR")]
     pub download: Option<Option<String>>,
+
+    /// Open the first matching artifact in the default browser
+    #[arg(long, conflicts_with_all = ["download", "copy_url"])]
+    pub open: bool,
+
+    /// Copy the first matching artifact download URL to the clipboard
+    #[arg(long, conflicts_with_all = ["download", "open"])]
+    pub copy_url: bool,
 
     /// Filter artifacts by glob pattern (e.g., "*.ipa", "test-*")
     #[arg(short, long, value_name = "PATTERN")]
@@ -904,6 +1077,10 @@ pub struct PipelinesArgs {
     #[arg(short, long)]
     pub branch: Option<String>,
 
+    /// Use the current git branch as the branch filter
+    #[arg(long, conflicts_with = "branch")]
+    pub current_branch: bool,
+
     /// Filter by user who triggered (partial match, case-insensitive)
     #[arg(long, value_name = "USER")]
     pub triggered_by: Option<String>,
@@ -949,7 +1126,7 @@ Displays pipeline information including:
   - Stage breakdown with individual workflow status")]
     Show {
         /// Pipeline ID (from 'pipelines' command or Bitrise URL)
-        id: String,
+        id: Option<String>,
 
         /// App slug (overrides default)
         #[arg(short, long)]
@@ -1014,7 +1191,7 @@ Confirmation:
   The abort reason is optional but helps with debugging.")]
     Abort {
         /// Pipeline ID to abort
-        id: String,
+        id: Option<String>,
 
         /// App slug (overrides default)
         #[arg(short, long)]
@@ -1045,7 +1222,7 @@ Rebuild Modes:
 Partial rebuilds are faster and preserve successful work.")]
     Rebuild {
         /// Pipeline ID to rebuild
-        id: String,
+        id: Option<String>,
 
         /// App slug (overrides default)
         #[arg(short, long)]
@@ -1082,7 +1259,7 @@ Use --notify to receive a desktop notification when the
 pipeline completes (success, failure, or abort).")]
     Watch {
         /// Pipeline ID to watch
-        id: String,
+        id: Option<String>,
 
         /// App slug (overrides default)
         #[arg(short, long)]
@@ -1095,6 +1272,140 @@ pipeline completes (success, failure, or abort).")]
         /// Send desktop notification when pipeline completes
         #[arg(short, long)]
         notify: bool,
+    },
+}
+
+/// Arguments for the doctor command
+#[derive(Args, Default)]
+pub struct DoctorArgs {}
+
+/// Arguments for the diagnose command
+#[derive(Args)]
+pub struct DiagnoseArgs {
+    /// Build slug (unique ID from Bitrise URL or 'builds' output)
+    #[arg(value_name = "SLUG", required_unless_present = "latest")]
+    pub slug: Option<String>,
+
+    /// App slug (overrides default)
+    #[arg(short, long)]
+    pub app: Option<String>,
+
+    /// Diagnose the latest build matching the supplied filters
+    #[arg(long)]
+    pub latest: bool,
+
+    /// Filter latest resolution by branch name
+    #[arg(short, long, requires = "latest")]
+    pub branch: Option<String>,
+
+    /// Filter latest resolution by workflow name
+    #[arg(short, long, requires = "latest")]
+    pub workflow: Option<String>,
+
+    /// Filter latest resolution by status
+    #[arg(short, long, value_enum, requires = "latest")]
+    pub status: Option<BuildStatusFilter>,
+
+    /// Filter latest resolution by pull request number
+    #[arg(long, value_name = "NUMBER", requires = "latest")]
+    pub pr: Option<i64>,
+
+    /// Resolve branch from the current git checkout
+    #[arg(long, conflicts_with = "branch", requires = "latest")]
+    pub current_branch: bool,
+}
+
+/// Arguments for the compare command
+#[derive(Args)]
+pub struct CompareArgs {
+    /// Left-hand build slug
+    #[arg(value_name = "LEFT")]
+    pub left: String,
+
+    /// Right-hand build slug
+    #[arg(value_name = "RIGHT")]
+    pub right: String,
+
+    /// App slug (overrides default)
+    #[arg(short, long)]
+    pub app: Option<String>,
+}
+
+/// Arguments for the view command
+#[derive(Args)]
+pub struct ViewArgs {
+    #[command(subcommand)]
+    pub command: ViewCommands,
+}
+
+/// View subcommands
+#[derive(Subcommand)]
+pub enum ViewCommands {
+    /// List saved views
+    List,
+
+    /// Save a view definition
+    Save {
+        /// View name
+        name: String,
+
+        /// View kind
+        #[arg(long, value_enum)]
+        kind: ViewKindArg,
+
+        /// App slug (or alias)
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Status filter
+        #[arg(short, long, value_enum)]
+        status: Option<BuildStatusFilter>,
+
+        /// Branch filter
+        #[arg(short, long)]
+        branch: Option<String>,
+
+        /// Workflow filter (build views only)
+        #[arg(short, long)]
+        workflow: Option<String>,
+
+        /// Triggered-by filter
+        #[arg(long)]
+        triggered_by: Option<String>,
+
+        /// Match items triggered by the authenticated user
+        #[arg(long, conflicts_with = "triggered_by")]
+        me: bool,
+
+        /// Since filter
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Pull request filter (build views only)
+        #[arg(long, value_name = "NUMBER")]
+        pr: Option<i64>,
+
+        /// Limit
+        #[arg(short, long)]
+        limit: Option<u32>,
+    },
+
+    /// Show a saved view definition
+    Show {
+        /// View name
+        name: String,
+    },
+
+    /// Run a saved view
+    Run {
+        /// View name
+        name: String,
+    },
+
+    /// Remove a saved view
+    Remove {
+        /// View name
+        name: String,
     },
 }
 
@@ -1124,4 +1435,45 @@ fn parse_env_var(s: &str) -> std::result::Result<(String, String), String> {
         .find('=')
         .ok_or_else(|| format!("Invalid format: '{}'. Expected KEY=VALUE", s))?;
     Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_latest_parses_without_slug() {
+        let cli = Cli::try_parse_from(["reprise", "build", "--latest", "--current-branch"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_log_latest_parses_without_slug() {
+        let cli = Cli::try_parse_from(["reprise", "log", "--latest", "--status", "failed"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_artifacts_latest_parses_without_slug() {
+        let cli = Cli::try_parse_from(["reprise", "artifacts", "--latest", "--branch", "main"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_app_set_parses_without_identifier() {
+        let cli = Cli::try_parse_from(["reprise", "app", "set"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_watch_parses_without_identifier() {
+        let cli = Cli::try_parse_from(["reprise", "pipeline", "watch"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_abort_parses_without_identifier() {
+        let cli = Cli::try_parse_from(["reprise", "pipeline", "abort"]);
+        assert!(cli.is_ok());
+    }
 }

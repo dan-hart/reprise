@@ -5,9 +5,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::{io, io::Write};
 
+use is_terminal::IsTerminal;
+
+use crate::bitrise::{App, BitriseClient, Build};
+use crate::cli::args::{BuildStatusFilter, OutputFormat};
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{RepriseError, Result};
 
 /// Get GitHub username from git config, if available.
 ///
@@ -60,13 +65,17 @@ pub fn get_github_username() -> Option<String> {
 /// # Example
 /// ```ignore
 /// let matches = matches_user(
-///     "webhook-github/dan-hart",
+///     "webhook-github/octocat",
 ///     "bitrise-user",
-///     Some("dan-hart"),
+///     Some("octocat"),
 /// );
 /// assert!(matches);
 /// ```
-pub fn matches_user(triggered_by: &str, bitrise_username: &str, github_username: Option<&str>) -> bool {
+pub fn matches_user(
+    triggered_by: &str,
+    bitrise_username: &str,
+    github_username: Option<&str>,
+) -> bool {
     let t_lower = triggered_by.to_lowercase();
     let bitrise_lower = bitrise_username.to_lowercase();
 
@@ -115,7 +124,336 @@ pub fn matches_user(triggered_by: &str, bitrise_username: &str, github_username:
 pub fn resolve_app_slug<'a>(app_arg: Option<&'a str>, config: &'a Config) -> Result<&'a str> {
     match app_arg {
         Some(input) => Ok(config.resolve_alias(input)),
-        None => config.require_default_app(),
+        None => config
+            .require_default_app()
+            .or_else(|_| resolve_repo_alias(config).ok_or(RepriseError::NoDefaultApp)),
+    }
+}
+
+/// Get the current git branch from the repository in the current working directory.
+pub fn current_git_branch() -> Result<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(RepriseError::InvalidArgument(
+            "Unable to determine the current git branch.".to_string(),
+        ));
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        return Err(RepriseError::InvalidArgument(
+            "Current git branch is empty.".to_string(),
+        ));
+    }
+
+    Ok(branch)
+}
+
+/// Try to resolve the current repository name as an app alias.
+pub fn resolve_repo_alias(config: &Config) -> Option<&str> {
+    let cwd = std::env::current_dir().ok()?;
+    let repo_name = cwd.file_name()?.to_str()?;
+    config.get_alias(repo_name)
+}
+
+/// Resolve the latest build matching the given filters.
+pub fn resolve_latest_build(
+    client: &BitriseClient,
+    app_slug: &str,
+    branch: Option<&str>,
+    workflow: Option<&str>,
+    status: Option<BuildStatusFilter>,
+    pr: Option<i64>,
+    current_branch: bool,
+) -> Result<Build> {
+    let branch = if current_branch {
+        Some(current_git_branch()?)
+    } else {
+        branch.map(str::to_string)
+    };
+
+    let response = client.list_builds(
+        app_slug,
+        status.map(BuildStatusFilter::to_api_code),
+        branch.as_deref(),
+        workflow,
+        latest_build_page_size(pr),
+    )?;
+
+    response
+        .data
+        .into_iter()
+        .find(|build| pr.is_none_or(|pr_num| build.pull_request_id == Some(pr_num)))
+        .ok_or_else(|| {
+            RepriseError::BuildNotFound("No build matched the latest filters".to_string())
+        })
+}
+
+fn latest_build_page_size(pr: Option<i64>) -> u32 {
+    if pr.is_some() {
+        50
+    } else {
+        25
+    }
+}
+
+fn ensure_interactive_selection_allowed(format: OutputFormat, resource: &str) -> Result<()> {
+    if format == OutputFormat::Json {
+        return Err(RepriseError::InvalidArgument(format!(
+            "Interactive {} selection is not supported with --output json. Provide an explicit target instead.",
+            resource
+        )));
+    }
+
+    Ok(())
+}
+
+/// Whether the current process can safely prompt the user for interactive input.
+pub fn can_prompt() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+/// Prompt the user to pick one option from a numbered list.
+pub fn prompt_select(title: &str, options: &[String]) -> Result<usize> {
+    if !can_prompt() {
+        return Err(RepriseError::InvalidArgument(
+            "Interactive selection requires a terminal.".to_string(),
+        ));
+    }
+
+    if options.is_empty() {
+        return Err(RepriseError::InvalidArgument(format!(
+            "No {} available to choose from.",
+            title
+        )));
+    }
+
+    eprintln!("{}", title);
+    for (index, option) in options.iter().enumerate() {
+        eprintln!("  {}. {}", index + 1, option);
+    }
+
+    eprint!("Select an option [1-{}]: ", options.len());
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let selection: usize = input
+        .trim()
+        .parse()
+        .map_err(|_| RepriseError::InvalidArgument("Invalid selection.".to_string()))?;
+
+    if selection == 0 || selection > options.len() {
+        return Err(RepriseError::InvalidArgument(
+            "Selection out of range.".to_string(),
+        ));
+    }
+
+    Ok(selection - 1)
+}
+
+/// Resolve a build slug from an explicit slug, latest filters, or interactive selection.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_build_slug(
+    client: &BitriseClient,
+    app_slug: &str,
+    slug: Option<&str>,
+    latest: bool,
+    branch: Option<&str>,
+    workflow: Option<&str>,
+    status: Option<BuildStatusFilter>,
+    pr: Option<i64>,
+    current_branch: bool,
+    format: OutputFormat,
+) -> Result<String> {
+    if let Some(slug) = slug {
+        return Ok(slug.to_string());
+    }
+
+    if latest {
+        return Ok(resolve_latest_build(
+            client,
+            app_slug,
+            branch,
+            workflow,
+            status,
+            pr,
+            current_branch,
+        )?
+        .slug);
+    }
+
+    ensure_interactive_selection_allowed(format, "build")?;
+
+    let response = client.list_builds(app_slug, None, None, None, 10)?;
+    let options: Vec<String> = response
+        .data
+        .iter()
+        .map(|build| {
+            format!(
+                "#{} {} [{}] {}",
+                build.build_number,
+                build.slug,
+                build.status_display(),
+                build.branch
+            )
+        })
+        .collect();
+    let selected = prompt_select("Select a build:", &options)?;
+    Ok(response.data[selected].slug.clone())
+}
+
+/// Resolve an app from a provided identifier or interactive selection.
+pub fn resolve_app_from_identifier(
+    client: &BitriseClient,
+    identifier: Option<&str>,
+    format: OutputFormat,
+) -> Result<App> {
+    if let Some(identifier) = identifier {
+        return match client.get_app(identifier) {
+            Ok(response) => Ok(response.data),
+            Err(_) => client
+                .find_app_by_name(identifier)?
+                .ok_or_else(|| RepriseError::AppNotFound(identifier.to_string())),
+        };
+    }
+
+    ensure_interactive_selection_allowed(format, "app")?;
+
+    let response = client.list_apps(25)?;
+    let options: Vec<String> = response
+        .data
+        .iter()
+        .map(|app| format!("{} ({})", app.title, app.slug))
+        .collect();
+    let selected = prompt_select("Select an app:", &options)?;
+    Ok(response.data[selected].clone())
+}
+
+/// Resolve a pipeline ID from an explicit ID or interactive selection.
+pub fn resolve_pipeline_id(
+    client: &BitriseClient,
+    app_slug: &str,
+    pipeline_id: Option<&str>,
+    branch: Option<&str>,
+    current_branch: bool,
+    format: OutputFormat,
+) -> Result<String> {
+    if let Some(pipeline_id) = pipeline_id {
+        return Ok(pipeline_id.to_string());
+    }
+
+    let branch = if current_branch {
+        Some(current_git_branch()?)
+    } else {
+        branch.map(str::to_string)
+    };
+
+    ensure_interactive_selection_allowed(format, "pipeline")?;
+
+    let response = client.list_pipelines(app_slug, None, branch.as_deref(), 10)?;
+    let options: Vec<String> = response
+        .data
+        .iter()
+        .map(|pipeline| {
+            format!(
+                "{} [{}] {}",
+                pipeline.id,
+                pipeline.status_display(),
+                pipeline.get_branch()
+            )
+        })
+        .collect();
+    let selected = prompt_select("Select a pipeline:", &options)?;
+    Ok(response.data[selected].id.clone())
+}
+
+/// Open a URL in the default browser.
+pub fn open_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(windows_start_args(url))
+            .spawn()?;
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_start_args(url: &str) -> Vec<String> {
+    vec![
+        "/C".to_string(),
+        "start".to_string(),
+        String::new(),
+        format!("\"{url}\""),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_clipboard_candidates() -> [&'static [&'static str]; 2] {
+    [&["xclip", "-selection", "clipboard"], &["wl-copy"]]
+}
+
+/// Copy text to the system clipboard using common platform tools.
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = std::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(text.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for candidate in linux_clipboard_candidates() {
+            let mut command = std::process::Command::new(candidate[0]);
+            if candidate.len() > 1 {
+                command.args(&candidate[1..]);
+            }
+
+            if let Ok(mut child) = command.stdin(std::process::Stdio::piped()).spawn() {
+                if let Some(stdin) = child.stdin.as_mut() {
+                    stdin.write_all(text.as_bytes())?;
+                }
+                child.wait()?;
+                return Ok(());
+            }
+        }
+
+        Err(RepriseError::InvalidArgument(
+            "No clipboard command is available on this system.".to_string(),
+        ))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut child = std::process::Command::new("clip")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(text.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(())
     }
 }
 
@@ -199,23 +537,23 @@ mod tests {
     #[test]
     fn test_matches_user_webhook_github_exact() {
         assert!(matches_user(
-            "webhook-github/dan-hart",
+            "webhook-github/octocat",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
     #[test]
     fn test_matches_user_webhook_github_case_insensitive() {
         assert!(matches_user(
-            "webhook-github/Dan-Hart",
+            "webhook-github/Octocat",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
         assert!(matches_user(
-            "webhook-github/dan-hart",
+            "webhook-github/octocat",
             "bitrise-user",
-            Some("Dan-Hart")
+            Some("Octocat")
         ));
     }
 
@@ -224,14 +562,18 @@ mod tests {
         assert!(!matches_user(
             "webhook-github/other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
     #[test]
     fn test_matches_user_no_github_username() {
         // Should fall back to Bitrise username matching
-        assert!(!matches_user("webhook-github/dan-hart", "bitrise-user", None));
+        assert!(!matches_user(
+            "webhook-github/octocat",
+            "bitrise-user",
+            None
+        ));
     }
 
     #[test]
@@ -239,28 +581,68 @@ mod tests {
         assert!(!matches_user(
             "webhook-github/other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
         assert!(!matches_user(
             "manual-other-user",
             "bitrise-user",
-            Some("dan-hart")
+            Some("octocat")
         ));
     }
 
     #[test]
     fn test_matches_user_empty_triggered_by() {
-        assert!(!matches_user("", "bitrise-user", Some("dan-hart")));
+        assert!(!matches_user("", "bitrise-user", Some("octocat")));
     }
 
     #[test]
     fn test_matches_user_bitrise_match_takes_precedence() {
         // If Bitrise username matches, we don't need GitHub
-        assert!(matches_user(
-            "manual-bitrise-user",
-            "bitrise-user",
-            None
-        ));
+        assert!(matches_user("manual-bitrise-user", "bitrise-user", None));
+    }
+
+    #[test]
+    fn test_latest_build_page_size_defaults_to_recent_window() {
+        assert_eq!(latest_build_page_size(None), 25);
+    }
+
+    #[test]
+    fn test_latest_build_page_size_expands_for_pr_filter() {
+        assert_eq!(latest_build_page_size(Some(1234)), 50);
+    }
+
+    #[test]
+    fn test_ensure_interactive_selection_allowed_rejects_json_output() {
+        let err =
+            ensure_interactive_selection_allowed(crate::cli::args::OutputFormat::Json, "build")
+                .unwrap_err();
+
+        assert!(matches!(err, RepriseError::InvalidArgument(_)));
+        assert!(err.to_string().contains("--output json"));
+    }
+
+    #[test]
+    fn test_windows_start_args_quote_the_url_and_set_empty_title() {
+        let args = windows_start_args("https://example.com/?a=1&b=2");
+
+        assert_eq!(
+            args,
+            vec!["/C", "start", "", "\"https://example.com/?a=1&b=2\""]
+        );
+    }
+
+    #[test]
+    fn test_linux_clipboard_candidates_support_multiple_argument_lengths() {
+        let candidates = linux_clipboard_candidates();
+
+        assert_eq!(candidates[0], &["xclip", "-selection", "clipboard"]);
+        assert_eq!(candidates[1], &["wl-copy"]);
+    }
+
+    #[test]
+    fn test_resolve_repo_alias_miss() {
+        let config = Config::default();
+        assert!(resolve_repo_alias(&config).is_none());
     }
 
     // ─────────────────────────────────────────────────────────────────────────

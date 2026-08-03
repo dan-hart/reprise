@@ -8,8 +8,9 @@ use std::time::Duration;
 use chrono::{Local, Utc};
 use colored::Colorize;
 
-use super::common::{get_github_username, matches_user, resolve_app_slug};
+use super::common::{current_git_branch, get_github_username, matches_user, resolve_app_slug};
 use crate::bitrise::BitriseClient;
+use crate::bitrise::Build;
 use crate::cli::args::{BuildsArgs, OutputFormat};
 use crate::config::Config;
 use crate::duration::parse_since;
@@ -75,6 +76,11 @@ pub fn builds(
     fetch_and_format_builds(client, config, args, format)
 }
 
+struct FetchedBuilds {
+    builds: Vec<Build>,
+    timings: Vec<output::BuildTiming>,
+}
+
 /// Watch builds continuously until interrupted
 fn watch_builds(
     client: &BitriseClient,
@@ -117,8 +123,13 @@ fn watch_builds(
         }
 
         // Fetch and display builds
-        match fetch_and_format_builds(client, config, args, format) {
-            Ok(output) => {
+        match fetch_builds(client, config, args, format) {
+            Ok(fetched) => {
+                if format == OutputFormat::Pretty {
+                    println!("{}", render_build_dashboard(config, args, &fetched.builds)?);
+                }
+
+                let output = format_fetched_builds(&fetched, args, format)?;
                 if !output.is_empty() {
                     println!("{}", output);
                 }
@@ -126,16 +137,6 @@ fn watch_builds(
             Err(e) => {
                 eprintln!("{}: {}", "error".red(), e);
             }
-        }
-
-        // Show last update time in pretty mode
-        if format == OutputFormat::Pretty {
-            println!(
-                "\n{} Last updated: {} (refreshing every {}s)",
-                "->".dimmed(),
-                Local::now().format("%H:%M:%S"),
-                args.interval
-            );
         }
 
         stdout.flush()?;
@@ -147,13 +148,13 @@ fn watch_builds(
     Ok(String::new())
 }
 
-/// Fetch builds and format output (used by both single and watch modes)
-fn fetch_and_format_builds(
+/// Fetch builds (used by both single and watch modes)
+fn fetch_builds(
     client: &BitriseClient,
     config: &Config,
     args: &BuildsArgs,
     format: OutputFormat,
-) -> Result<String> {
+) -> Result<FetchedBuilds> {
     // Resolve app slug from args or config default
     let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
 
@@ -184,6 +185,11 @@ fn fetch_and_format_builds(
 
     // Convert status filter to API code
     let status = args.status.map(|s| s.to_api_code());
+    let branch_filter = if args.current_branch {
+        Some(current_git_branch()?)
+    } else {
+        args.branch.clone()
+    };
 
     // Fetch extra builds when filtering client-side to ensure we have enough results
     // Cap at 50 (API maximum)
@@ -196,7 +202,7 @@ fn fetch_and_format_builds(
     let response = client.list_builds(
         app_slug,
         status,
-        args.branch.as_deref(),
+        branch_filter.as_deref(),
         args.workflow.as_deref(),
         fetch_limit,
     )?;
@@ -216,7 +222,7 @@ fn fetch_and_format_builds(
     // PR number filter
     let pr_filter = args.pr;
 
-    let builds: Vec<_> = if let Some((ref bitrise_username, ref github_username)) = me_filter {
+    let builds: Vec<Build> = if let Some((ref bitrise_username, ref github_username)) = me_filter {
         // --me flag: match both Bitrise username and webhook-github/<github-username>
         response
             .data
@@ -272,19 +278,33 @@ fn fetch_and_format_builds(
             .collect()
     };
 
-    if args.elapsed || args.average || args.progress {
+    let timings = if args.elapsed || args.average || args.progress {
         let averages = history
             .as_deref()
             .map(workflow_averages)
             .unwrap_or_default();
         let now = Utc::now();
-        let timings = builds
+        builds
             .iter()
             .map(|build| build_timing(build, &averages, now))
-            .collect::<Vec<_>>();
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(FetchedBuilds { builds, timings })
+}
+
+/// Format fetched builds with optional timing metrics.
+fn format_fetched_builds(
+    fetched: &FetchedBuilds,
+    args: &BuildsArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    if args.elapsed || args.average || args.progress {
         output::format_builds_with_timing(
-            &builds,
-            &timings,
+            &fetched.builds,
+            &fetched.timings,
             output::TimingOptions {
                 elapsed: args.elapsed,
                 average: args.average,
@@ -293,14 +313,59 @@ fn fetch_and_format_builds(
             format,
         )
     } else {
-        output::format_builds(&builds, format)
+        output::format_builds(&fetched.builds, format)
     }
+}
+
+/// Fetch builds and format output (used by both single and watch modes).
+fn fetch_and_format_builds(
+    client: &BitriseClient,
+    config: &Config,
+    args: &BuildsArgs,
+    format: OutputFormat,
+) -> Result<String> {
+    let fetched = fetch_builds(client, config, args, format)?;
+    format_fetched_builds(&fetched, args, format)
+}
+
+fn render_build_dashboard(config: &Config, args: &BuildsArgs, builds: &[Build]) -> Result<String> {
+    let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+    let running = builds.iter().filter(|build| build.status == 0).count();
+    let success = builds.iter().filter(|build| build.status == 1).count();
+    let failed = builds.iter().filter(|build| build.status == 2).count();
+    let aborted = builds.iter().filter(|build| build.status == 3).count();
+
+    let branch = if args.current_branch {
+        current_git_branch().ok()
+    } else {
+        args.branch.clone()
+    };
+
+    let mut output = String::new();
+    output.push_str("Build Dashboard\n");
+    output.push_str("───────────────\n");
+    output.push_str(&format!("App:      {}\n", app_slug));
+    output.push_str(&format!("Updated:  {}\n", Local::now().format("%H:%M:%S")));
+    output.push_str(&format!("Running:  {}\n", running));
+    output.push_str(&format!("Success:  {}\n", success));
+    output.push_str(&format!("Failed:   {}\n", failed));
+    output.push_str(&format!("Aborted:  {}\n", aborted));
+    if let Some(branch) = branch {
+        output.push_str(&format!("Branch:   {}\n", branch));
+    }
+    if let Some(workflow) = args.workflow.as_deref() {
+        output.push_str(&format!("Workflow: {}\n", workflow));
+    }
+    if let Some(pr) = args.pr {
+        output.push_str(&format!("PR:       {}\n", pr));
+    }
+    output.push('\n');
+    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitrise::Build;
     use chrono::{TimeZone, Utc};
     use mockito::Server;
 
@@ -337,6 +402,7 @@ mod tests {
             app: Some("test-app".to_string()),
             status: None,
             branch: None,
+            current_branch: false,
             workflow: None,
             workflow_contains: None,
             triggered_by: None,

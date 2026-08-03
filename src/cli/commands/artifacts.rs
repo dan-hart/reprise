@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 
+use super::common::{copy_to_clipboard, open_url, resolve_app_slug, resolve_build_slug};
 use crate::bitrise::{Artifact, BitriseClient};
 use crate::cli::args::{ArtifactsArgs, OutputFormat};
 use crate::config::Config;
@@ -139,10 +140,7 @@ fn sanitize_filename(name: &str) -> Result<String> {
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| {
-            RepriseError::InvalidArgument(format!(
-                "Cannot extract safe filename from: {}",
-                name
-            ))
+            RepriseError::InvalidArgument(format!("Cannot extract safe filename from: {}", name))
         })?;
 
     // Reject if still contains path traversal sequences
@@ -172,18 +170,22 @@ pub fn artifacts(
     format: OutputFormat,
 ) -> Result<String> {
     // Get app slug from args or default
-    let app_slug = args
-        .app
-        .as_deref()
-        .or(config.defaults.app_slug.as_deref())
-        .ok_or_else(|| {
-            crate::error::RepriseError::Config(
-                "No app specified. Use --app or set a default with 'reprise app set'".to_string(),
-            )
-        })?;
+    let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+    let build_slug = resolve_build_slug(
+        client,
+        app_slug,
+        args.slug.as_deref(),
+        args.latest,
+        args.branch.as_deref(),
+        args.workflow.as_deref(),
+        args.status,
+        args.pr,
+        args.current_branch,
+        format,
+    )?;
 
     // List artifacts
-    let response = client.list_artifacts(app_slug, &args.slug)?;
+    let response = client.list_artifacts(app_slug, &build_slug)?;
 
     if response.data.is_empty() {
         return match format {
@@ -211,7 +213,9 @@ pub fn artifacts(
                 "No artifacts matched {}.\n\nTotal artifacts in build: {}",
                 filter_msg,
                 response.data.len()
-            ).dimmed().to_string()),
+            )
+            .dimmed()
+            .to_string()),
             OutputFormat::Json => Ok(serde_json::to_string_pretty(&Vec::<&Artifact>::new())?),
         };
     }
@@ -230,8 +234,7 @@ pub fn artifacts(
 
         for artifact in &filtered_artifacts {
             // Get artifact with download URL
-            let artifact_detail =
-                client.get_artifact(app_slug, &args.slug, &artifact.slug)?;
+            let artifact_detail = client.get_artifact(app_slug, &build_slug, &artifact.slug)?;
 
             if let Some(ref url) = artifact_detail.data.expiring_download_url {
                 // Sanitize filename to prevent path traversal
@@ -278,6 +281,42 @@ pub fn artifacts(
         };
     }
 
+    if args.open || args.copy_url {
+        let artifact = filtered_artifacts[0];
+        let artifact_detail = client.get_artifact(app_slug, &build_slug, &artifact.slug)?;
+        let url = artifact_detail
+            .data
+            .expiring_download_url
+            .or(artifact_detail.data.public_install_page_url)
+            .ok_or_else(|| {
+                RepriseError::InvalidArgument(
+                    "No download URL is available for this artifact.".to_string(),
+                )
+            })?;
+
+        if args.open {
+            open_url(&url)?;
+            return match format {
+                OutputFormat::Pretty => Ok(format!("Opened artifact URL for {}", artifact.title)),
+                OutputFormat::Json => Ok(serde_json::to_string_pretty(&serde_json::json!({
+                    "opened": true,
+                    "title": artifact.title,
+                    "url": url
+                }))?),
+            };
+        }
+
+        copy_to_clipboard(&url)?;
+        return match format {
+            OutputFormat::Pretty => Ok(format!("Copied artifact URL for {}", artifact.title)),
+            OutputFormat::Json => Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "copied": true,
+                "title": artifact.title,
+                "url": url
+            }))?),
+        };
+    }
+
     // Just list artifacts
     match format {
         OutputFormat::Pretty => {
@@ -291,24 +330,18 @@ pub fn artifacts(
                 "{} ({} artifact{}{})\n\n",
                 "Build Artifacts".bold(),
                 filtered_artifacts.len(),
-                if filtered_artifacts.len() == 1 { "" } else { "s" },
+                if filtered_artifacts.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
                 filter_note
             ));
 
             for artifact in &filtered_artifacts {
-                output.push_str(&format!(
-                    "  {} {}\n",
-                    "•".cyan(),
-                    artifact.title.bold()
-                ));
-                output.push_str(&format!(
-                    "    Slug: {}\n",
-                    artifact.slug.dimmed()
-                ));
-                output.push_str(&format!(
-                    "    Size: {}\n",
-                    artifact.size_display()
-                ));
+                output.push_str(&format!("  {} {}\n", "•".cyan(), artifact.title.bold()));
+                output.push_str(&format!("    Slug: {}\n", artifact.slug.dimmed()));
+                output.push_str(&format!("    Size: {}\n", artifact.size_display()));
                 if let Some(ref artifact_type) = artifact.artifact_type {
                     output.push_str(&format!("    Type: {}\n", artifact_type));
                 }

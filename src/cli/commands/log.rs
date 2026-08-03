@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use super::common::{is_interrupted, resolve_app_slug, setup_interrupt_handler};
+use super::common::{
+    is_interrupted, resolve_app_slug, resolve_build_slug, setup_interrupt_handler,
+};
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{LogArgs, OutputFormat};
 use crate::config::Config;
@@ -20,14 +22,33 @@ pub fn log(
 ) -> Result<String> {
     // Resolve app slug from args or config default
     let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
+    let build_slug = resolve_build_slug(
+        client,
+        app_slug,
+        args.slug.as_deref(),
+        args.latest,
+        args.branch.as_deref(),
+        args.workflow.as_deref(),
+        args.status,
+        args.pr,
+        args.current_branch,
+        format,
+    )?;
 
     // Handle follow mode
     if args.follow {
-        return follow_log(client, app_slug, &args.slug, args.interval, args.notify, format);
+        return follow_log(
+            client,
+            app_slug,
+            &build_slug,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     // Fetch the full log
-    let log_content = client.get_full_log(app_slug, &args.slug)?;
+    let log_content = client.get_full_log(app_slug, &build_slug)?;
 
     if log_content.is_empty() {
         return Err(RepriseError::LogNotAvailable(
@@ -57,7 +78,7 @@ pub fn log(
         OutputFormat::Pretty => Ok(highlight_log_content(&output)),
         OutputFormat::Json => {
             let result = serde_json::json!({
-                "build_slug": args.slug,
+                "build_slug": build_slug,
                 "log": output,
                 "lines": output.lines().count()
             });
@@ -82,10 +103,7 @@ fn follow_log(
     let interrupted = setup_interrupt_handler();
 
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Following build log (Ctrl+C to stop)...\n",
-            "->".cyan()
-        );
+        eprintln!("{} Following build log (Ctrl+C to stop)...\n", "->".cyan());
     }
 
     loop {
