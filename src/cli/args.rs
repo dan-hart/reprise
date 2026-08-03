@@ -113,6 +113,9 @@ Examples:
   reprise builds --pr 1234        Show builds for PR #1234
   reprise builds --limit 50       Show more builds
   reprise builds --app other-app  Use different app
+  reprise builds --elapsed        Show running worker time
+  reprise builds --average        Show workflow duration averages
+  reprise builds --progress       Show running build progress estimates
   reprise builds -o json          Output as JSON
 
 Filtering:
@@ -467,6 +470,18 @@ pub struct BuildsArgs {
     /// Maximum number of builds to return
     #[arg(short, long, default_value = "25", value_name = "N")]
     pub limit: u32,
+
+    /// Show elapsed worker time for running builds
+    #[arg(long)]
+    pub elapsed: bool,
+
+    /// Show average duration for each workflow from recent completed builds
+    #[arg(long)]
+    pub average: bool,
+
+    /// Show estimated progress for running builds from workflow averages
+    #[arg(long)]
+    pub progress: bool,
 
     /// Watch mode - continuously refresh the build list
     #[arg(long)]

@@ -127,6 +127,14 @@ impl Build {
         }
     }
 
+    /// Calculate elapsed worker time for a running build at a given instant.
+    pub fn elapsed_at(&self, now: DateTime<Utc>) -> Option<chrono::Duration> {
+        self.is_running()
+            .then_some(self.started_on_worker_at)
+            .flatten()
+            .map(|start| now - start)
+    }
+
     /// Format duration as human-readable string
     pub fn duration_display(&self) -> String {
         match self.duration() {
@@ -490,6 +498,15 @@ mod tests {
             pull_request_target_branch: None,
             credit_cost: None,
         }
+    }
+
+    #[test]
+    fn elapsed_at_uses_worker_start_for_running_builds() {
+        let started = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2024, 1, 1, 12, 5, 30).unwrap();
+        let build = make_build(0, Some(started), None);
+
+        assert_eq!(build.elapsed_at(now).unwrap().num_seconds(), 330);
     }
 
     fn make_pipeline(status: i32, started: Option<DateTime<Utc>>, finished: Option<DateTime<Utc>>) -> Pipeline {

@@ -1,10 +1,11 @@
 use std::io::{self, Write};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
+use chrono::{Local, Utc};
 use colored::Colorize;
 
 use super::common::{get_github_username, matches_user, resolve_app_slug};
@@ -14,6 +15,48 @@ use crate::config::Config;
 use crate::duration::parse_since;
 use crate::error::{RepriseError, Result};
 use crate::output;
+
+fn workflow_averages(history: &[crate::bitrise::Build]) -> HashMap<String, chrono::Duration> {
+    let mut totals: HashMap<String, (chrono::Duration, i32)> = HashMap::new();
+
+    for build in history {
+        if let Some(duration) = build.duration().filter(|duration| {
+            !build.is_running() && *duration >= chrono::Duration::zero()
+        }) {
+            let entry = totals
+                .entry(build.triggered_workflow.clone())
+                .or_insert((chrono::Duration::zero(), 0));
+            entry.0 += duration;
+            entry.1 += 1;
+        }
+    }
+
+    totals
+        .into_iter()
+        .map(|(workflow, (total, count))| (workflow, total / count))
+        .collect()
+}
+
+fn build_timing(
+    build: &crate::bitrise::Build,
+    averages: &HashMap<String, chrono::Duration>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> output::BuildTiming {
+    let elapsed = build.elapsed_at(now);
+    let average = averages.get(&build.triggered_workflow).copied();
+    let progress_percent = elapsed.zip(average).and_then(|(elapsed, average)| {
+        (average > chrono::Duration::zero()).then(|| {
+            ((elapsed.num_milliseconds() as f64 / average.num_milliseconds() as f64) * 100.0)
+                .min(100.0) as u64
+        })
+    });
+
+    output::BuildTiming {
+        elapsed,
+        average,
+        progress_percent,
+    }
+}
 
 /// Handle the builds command
 pub fn builds(
@@ -157,6 +200,12 @@ fn fetch_and_format_builds(
         fetch_limit,
     )?;
 
+    let history = if args.average || args.progress {
+        Some(client.list_builds(app_slug, None, None, None, 50)?.data)
+    } else {
+        None
+    };
+
     // Parse --since threshold if provided
     let since_threshold = args
         .since
@@ -236,5 +285,183 @@ fn fetch_and_format_builds(
             .collect()
     };
 
-    output::format_builds(&builds, format)
+    if args.elapsed || args.average || args.progress {
+        let averages = history
+            .as_deref()
+            .map(workflow_averages)
+            .unwrap_or_default();
+        let now = Utc::now();
+        let timings = builds
+            .iter()
+            .map(|build| build_timing(build, &averages, now))
+            .collect::<Vec<_>>();
+        output::format_builds_with_timing(
+            &builds,
+            &timings,
+            output::TimingOptions {
+                elapsed: args.elapsed,
+                average: args.average,
+                progress: args.progress,
+            },
+            format,
+        )
+    } else {
+        output::format_builds(&builds, format)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use crate::bitrise::Build;
+    use mockito::Server;
+
+    fn build(workflow: &str, started_at: Option<chrono::DateTime<Utc>>, finished_at: Option<chrono::DateTime<Utc>>) -> Build {
+        Build {
+            slug: "build".to_string(),
+            triggered_at: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            started_on_worker_at: started_at,
+            finished_at,
+            status: 1,
+            status_text: "success".to_string(),
+            abort_reason: None,
+            branch: "main".to_string(),
+            build_number: 1,
+            commit_hash: None,
+            commit_message: None,
+            tag: None,
+            triggered_workflow: workflow.to_string(),
+            triggered_by: None,
+            stack_identifier: None,
+            machine_type_id: None,
+            pull_request_id: None,
+            pull_request_target_branch: None,
+            credit_cost: None,
+        }
+    }
+
+    fn args_with_timing(average: bool, progress: bool) -> BuildsArgs {
+        BuildsArgs {
+            app: Some("test-app".to_string()),
+            status: None,
+            branch: None,
+            workflow: None,
+            workflow_contains: None,
+            triggered_by: None,
+            me: false,
+            since: None,
+            pr: None,
+            limit: 25,
+            elapsed: false,
+            average,
+            progress,
+            watch: false,
+            interval: 10,
+        }
+    }
+
+    fn list_response(builds: &[Build]) -> String {
+        serde_json::json!({
+            "data": builds,
+            "paging": { "total_item_count": builds.len(), "page_item_limit": 50, "next": null }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn workflow_averages_uses_completed_durations_only() {
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let history = vec![
+            build("primary", Some(start), Some(start + chrono::Duration::seconds(60))),
+            build("primary", Some(start), Some(start + chrono::Duration::seconds(120))),
+            build("primary", Some(start), None),
+        ];
+
+        assert_eq!(workflow_averages(&history)["primary"].num_seconds(), 90);
+    }
+
+    #[test]
+    fn build_timing_caps_running_progress_at_one_hundred_percent() {
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let now = start + chrono::Duration::seconds(180);
+        let mut running = build("primary", Some(start), None);
+        running.status = 0;
+        let averages = workflow_averages(&[build(
+            "primary",
+            Some(start),
+            Some(start + chrono::Duration::seconds(60)),
+        )]);
+
+        let timing = build_timing(&running, &averages, now);
+
+        assert_eq!(timing.elapsed.unwrap().num_seconds(), 180);
+        assert_eq!(timing.average.unwrap().num_seconds(), 60);
+        assert_eq!(timing.progress_percent, Some(100));
+    }
+
+    #[test]
+    fn build_timing_is_unavailable_without_worker_start() {
+        let now = Utc.with_ymd_and_hms(2024, 1, 1, 12, 3, 0).unwrap();
+        let mut running = build("primary", None, None);
+        running.status = 0;
+        let averages = workflow_averages(&[build(
+            "primary",
+            Some(now),
+            Some(now + chrono::Duration::seconds(60)),
+        )]);
+
+        let timing = build_timing(&running, &averages, now);
+
+        assert_eq!(timing.elapsed, None);
+        assert_eq!(timing.progress_percent, None);
+    }
+
+    #[test]
+    fn progress_fetches_unfiltered_history_once() {
+        let mut server = Server::new();
+        let main = server
+            .mock("GET", "/apps/test-app/builds?limit=25")
+            .with_status(200)
+            .with_body(list_response(&[build("primary", None, None)]))
+            .create();
+        let history = server
+            .mock("GET", "/apps/test-app/builds?limit=50")
+            .with_status(200)
+            .with_body(list_response(&[build(
+                "primary",
+                Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap()),
+                Some(Utc.with_ymd_and_hms(2024, 1, 1, 12, 1, 0).unwrap()),
+            )]))
+            .create();
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+
+        fetch_and_format_builds(
+            &client,
+            &Config::default(),
+            &args_with_timing(false, true),
+            OutputFormat::Json,
+        )
+        .unwrap();
+
+        main.assert();
+        history.assert();
+    }
+
+    #[test]
+    fn elapsed_does_not_fetch_history() {
+        let mut server = Server::new();
+        let main = server
+            .mock("GET", "/apps/test-app/builds?limit=25")
+            .with_status(200)
+            .with_body(list_response(&[build("primary", None, None)]))
+            .create();
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let mut args = args_with_timing(false, false);
+        args.elapsed = true;
+
+        fetch_and_format_builds(&client, &Config::default(), &args, OutputFormat::Json).unwrap();
+
+        main.assert();
+    }
 }

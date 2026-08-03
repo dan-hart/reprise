@@ -54,6 +54,17 @@ fn test_builds_help() {
 }
 
 #[test]
+fn test_builds_timing_flags_are_documented() {
+    reprise()
+        .args(["builds", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--elapsed"))
+        .stdout(predicate::str::contains("--average"))
+        .stdout(predicate::str::contains("--progress"));
+}
+
+#[test]
 fn test_trigger_help() {
     reprise()
         .args(["trigger", "--help"])

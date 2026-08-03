@@ -94,6 +94,11 @@ reprise builds
 # Filter by status
 reprise builds --status failed
 
+# Show running worker time, workflow averages, or progress estimates
+reprise builds --elapsed
+reprise builds --average
+reprise builds --progress
+
 # View a specific build
 reprise build abc123
 

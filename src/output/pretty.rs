@@ -2,6 +2,7 @@ use colored::Colorize;
 use terminal_size::{terminal_size, Width};
 
 use crate::bitrise::{App, Artifact, Build, Pipeline};
+use crate::output::{BuildTiming, TimingOptions};
 
 /// Get terminal width, defaulting to 100 if detection fails
 fn get_terminal_width() -> usize {
@@ -190,6 +191,15 @@ pub fn format_app(app: &App) -> String {
 
 /// Format a list of builds for pretty output
 pub fn format_builds(builds: &[Build]) -> String {
+    format_builds_with_timing(builds, &[], TimingOptions::default())
+}
+
+/// Format a list of builds with optional timing metrics.
+pub(crate) fn format_builds_with_timing(
+    builds: &[Build],
+    timings: &[BuildTiming],
+    options: TimingOptions,
+) -> String {
     if builds.is_empty() {
         return "No builds found.".to_string();
     }
@@ -201,7 +211,8 @@ pub fn format_builds(builds: &[Build]) -> String {
     output.push_str(&"─".repeat(term_width.min(120)));
     output.push('\n');
 
-    for build in builds {
+    for (index, build) in builds.iter().enumerate() {
+        let timing = timings.get(index).copied().unwrap_or_default();
         let status_colored = match build.status {
             0 => "running".yellow().bold(),
             1 => "success".green(),
@@ -241,6 +252,30 @@ pub fn format_builds(builds: &[Build]) -> String {
             output.push_str(&format!("        {} {}\n", "By:".cyan(), by.dimmed()));
         }
 
+        if options.elapsed && build.is_running() {
+            output.push_str(&format!(
+                "        {} {}\n",
+                "Elapsed:".cyan(),
+                timing_display(timing.elapsed).dimmed()
+            ));
+        }
+
+        if options.average {
+            output.push_str(&format!(
+                "        {} {}\n",
+                "Average:".cyan(),
+                timing_display(timing.average).dimmed()
+            ));
+        }
+
+        if options.progress && build.is_running() {
+            let progress = timing
+                .progress_percent
+                .map(|progress| format!("{progress}%"))
+                .unwrap_or_else(|| "unavailable".to_string());
+            output.push_str(&format!("        {} {}\n", "Progress:".cyan(), progress.dimmed()));
+        }
+
         // Show commit message preview for failed builds
         if build.is_failed() {
             if let Some(ref msg) = build.commit_message {
@@ -254,6 +289,21 @@ pub fn format_builds(builds: &[Build]) -> String {
     }
 
     output
+}
+
+fn timing_display(duration: Option<chrono::Duration>) -> String {
+    duration
+        .map(|duration| {
+            let seconds = duration.num_seconds();
+            if seconds < 60 {
+                format!("{seconds}s")
+            } else if seconds < 3600 {
+                format!("{}m {}s", seconds / 60, seconds % 60)
+            } else {
+                format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+            }
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 /// Format a single build for pretty output
@@ -810,6 +860,23 @@ mod tests {
         let result = format_builds(&[build]);
         assert!(result.contains("PR"));
         assert!(result.contains("42"));
+    }
+
+    #[test]
+    fn test_format_timed_builds_shows_unavailable_elapsed() {
+        let builds = vec![make_test_build("slug1", 1, 0)];
+        let timings = vec![crate::output::BuildTiming::default()];
+
+        let result = format_builds_with_timing(
+            &builds,
+            &timings,
+            crate::output::TimingOptions {
+                elapsed: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(result.contains("Elapsed: unavailable"));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
