@@ -132,7 +132,7 @@ impl Build {
         self.is_running()
             .then_some(self.started_on_worker_at)
             .flatten()
-            .map(|start| now - start)
+            .map(|start| (now - start).max(chrono::Duration::zero()))
     }
 
     /// Format duration as human-readable string
@@ -507,6 +507,14 @@ mod tests {
         let build = make_build(0, Some(started), None);
 
         assert_eq!(build.elapsed_at(now).unwrap().num_seconds(), 330);
+    }
+
+    #[test]
+    fn elapsed_at_clamps_future_worker_start_to_zero() {
+        let now = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let build = make_build(0, Some(now + chrono::Duration::seconds(30)), None);
+
+        assert_eq!(build.elapsed_at(now).unwrap(), chrono::Duration::zero());
     }
 
     fn make_pipeline(status: i32, started: Option<DateTime<Utc>>, finished: Option<DateTime<Utc>>) -> Pipeline {
