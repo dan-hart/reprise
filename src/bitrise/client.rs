@@ -457,11 +457,14 @@ impl BitriseClient {
             "build_params": build_params,
         });
 
+        // Pipelines are triggered through the standard build-trigger endpoint;
+        // there is no dedicated POST /pipelines endpoint. The returned
+        // build_slug is the pipeline ID when a pipeline is triggered.
         let response: PipelineTriggerResponse =
-            self.post(&format!("/apps/{app_slug}/pipelines"), &body)?;
+            self.post(&format!("/apps/{app_slug}/builds"), &body)?;
 
         // Get the pipeline details to return full Pipeline object
-        if let Some(ref id) = response.id {
+        if let Some(id) = response.pipeline_id() {
             let pipeline_response = self.get_pipeline(app_slug, id)?;
             Ok(pipeline_response.into_pipeline())
         } else {
@@ -1018,6 +1021,58 @@ mod tests {
 
         mock.assert();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_trigger_pipeline_uses_build_endpoint() {
+        let mut server = Server::new();
+
+        // Pipelines are triggered via the standard build-trigger endpoint;
+        // the response's build_slug is the new pipeline's ID
+        let trigger_mock = server
+            .mock("POST", "/apps/test-app/builds")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "hook_info": { "type": "bitrise" },
+                "build_params": {
+                    "pipeline_id": "build-and-test",
+                    "branch": "main"
+                }
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "status": "ok",
+                    "message": "webhook processed",
+                    "slug": "test-app",
+                    "service": "bitrise",
+                    "build_slug": "new-pipeline-id",
+                    "build_number": 42,
+                    "build_url": "https://app.bitrise.io/app/test-app/pipelines/new-pipeline-id",
+                    "triggered_pipeline": "build-and-test"
+                }"#,
+            )
+            .create();
+
+        let get_mock = server
+            .mock("GET", "/apps/test-app/pipelines/new-pipeline-id")
+            .with_status(200)
+            .with_body(make_pipeline_json("new-pipeline-id", 0))
+            .create();
+
+        let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
+        let params = PipelineTriggerParams {
+            pipeline_id: "build-and-test".to_string(),
+            branch: Some("main".to_string()),
+            environments: vec![],
+        };
+        let result = client.trigger_pipeline("test-app", params);
+
+        trigger_mock.assert();
+        get_mock.assert();
+        let pipeline = result.unwrap();
+        assert_eq!(pipeline.id, "new-pipeline-id");
+        assert!(pipeline.is_running());
     }
 
     // ─────────────────────────────────────────────────────────────────────────

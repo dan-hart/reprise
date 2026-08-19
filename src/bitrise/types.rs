@@ -6,8 +6,6 @@ fn deserialize_pipeline_status<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
 {
-    use serde::de::Error;
-
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum StatusValue {
@@ -20,12 +18,16 @@ where
         StatusValue::Str(s) => {
             // Convert string status to integer
             match s.to_lowercase().as_str() {
-                "running" | "on_hold" | "initializing" | "waiting_to_be_triggered" => Ok(0),
+                "running" | "on_hold" | "initializing" | "waiting_to_be_triggered"
+                | "waiting_to_be_started" => Ok(0),
                 "succeeded" | "success" => Ok(1),
                 "failed" | "error" => Ok(2),
                 "aborted" | "cancelled" => Ok(3),
                 "aborted_with_success" => Ok(4),
-                _ => Err(D::Error::custom(format!("unknown status: {}", s))),
+                // Unrecognized statuses are treated as in-progress rather than
+                // failing deserialization, so new Bitrise queue states don't
+                // crash `pipeline watch`.
+                _ => Ok(0),
             }
         }
     }
@@ -436,15 +438,35 @@ pub struct PipelineTriggerParams {
     pub environments: Vec<(String, String)>,
 }
 
-/// Response from triggering a pipeline
+/// Response from triggering or rebuilding a pipeline
+///
+/// Pipelines are triggered through the standard build-trigger endpoint
+/// (`POST /apps/{app_slug}/builds` with `pipeline_id` in the build params).
+/// When a pipeline is triggered that way, `build_slug` holds the pipeline ID.
+/// The rebuild endpoint returns the new pipeline ID in `id` instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineTriggerResponse {
+    #[serde(default)]
     pub status: String,
+    #[serde(default)]
     pub message: String,
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
-    pub pipeline_id: Option<String>,
+    pub build_slug: Option<String>,
+    #[serde(default)]
+    pub build_number: Option<i64>,
+    #[serde(default)]
+    pub build_url: Option<String>,
+    #[serde(default)]
+    pub triggered_pipeline: Option<String>,
+}
+
+impl PipelineTriggerResponse {
+    /// The triggered pipeline's ID, whichever field the endpoint returned it in
+    pub fn pipeline_id(&self) -> Option<&str> {
+        self.build_slug.as_deref().or(self.id.as_deref())
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -974,5 +996,100 @@ mod tests {
         assert_eq!(build.slug, deserialized.slug);
         assert_eq!(build.status, deserialized.status);
         assert_eq!(build.branch, deserialized.branch);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline Status Deserialization Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn pipeline_with_status(status: &str) -> Pipeline {
+        let json = format!(
+            r#"{{
+                "id": "pipeline-123",
+                "status": "{status}",
+                "branch": "main",
+                "pipeline_id": "test-pipeline"
+            }}"#
+        );
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn test_pipeline_status_deserialize_waiting_to_be_started() {
+        let pipeline = pipeline_with_status("waiting_to_be_started");
+        assert_eq!(pipeline.status, 0);
+        assert!(pipeline.is_running());
+    }
+
+    #[test]
+    fn test_pipeline_status_deserialize_known_strings() {
+        assert_eq!(pipeline_with_status("running").status, 0);
+        assert_eq!(pipeline_with_status("on_hold").status, 0);
+        assert_eq!(pipeline_with_status("initializing").status, 0);
+        assert_eq!(pipeline_with_status("waiting_to_be_triggered").status, 0);
+        assert_eq!(pipeline_with_status("succeeded").status, 1);
+        assert_eq!(pipeline_with_status("failed").status, 2);
+        assert_eq!(pipeline_with_status("aborted").status, 3);
+        assert_eq!(pipeline_with_status("aborted_with_success").status, 4);
+    }
+
+    #[test]
+    fn test_pipeline_status_deserialize_unknown_string_degrades_to_running() {
+        let pipeline = pipeline_with_status("some_future_queue_state");
+        assert_eq!(pipeline.status, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline Trigger Response Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_pipeline_trigger_response_from_build_endpoint() {
+        // Shape returned by POST /apps/{app_slug}/builds when triggering a
+        // pipeline: build_slug is the pipeline ID
+        let json = r#"{
+            "status": "ok",
+            "message": "webhook processed",
+            "slug": "app-slug-123",
+            "service": "bitrise",
+            "build_slug": "8a2b6dd2-41d5-4bd8-96b8-e2e1b933a3f5",
+            "build_number": 42,
+            "build_url": "https://app.bitrise.io/app/app-slug-123/pipelines/8a2b6dd2-41d5-4bd8-96b8-e2e1b933a3f5",
+            "triggered_pipeline": "release-pipeline"
+        }"#;
+
+        let response: PipelineTriggerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            response.pipeline_id(),
+            Some("8a2b6dd2-41d5-4bd8-96b8-e2e1b933a3f5")
+        );
+        assert_eq!(response.build_number, Some(42));
+        assert_eq!(
+            response.triggered_pipeline.as_deref(),
+            Some("release-pipeline")
+        );
+        assert_eq!(response.status, "ok");
+    }
+
+    #[test]
+    fn test_pipeline_trigger_response_from_rebuild_endpoint() {
+        // Rebuild endpoint returns the new pipeline ID in `id`
+        let json = r#"{
+            "status": "ok",
+            "message": "pipeline rebuilt",
+            "id": "new-pipeline-id-456"
+        }"#;
+
+        let response: PipelineTriggerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.pipeline_id(), Some("new-pipeline-id-456"));
+        assert_eq!(response.build_slug, None);
+    }
+
+    #[test]
+    fn test_pipeline_trigger_response_missing_id_fields() {
+        let json = r#"{"status": "ok", "message": "webhook processed"}"#;
+
+        let response: PipelineTriggerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.pipeline_id(), None);
     }
 }
