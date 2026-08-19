@@ -27,7 +27,7 @@ fn test_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::diff("reprise 0.1.10\n"));
+        .stdout(predicate::str::diff("reprise 0.1.11\n"));
 }
 
 #[test]
