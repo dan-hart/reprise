@@ -123,7 +123,7 @@ impl BitriseClient {
     pub fn with_options(token: impl Into<String>, options: NetworkOptions) -> Result<Self> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(options.timeout))
+            .timeout(Duration::from_secs(30))
             .redirect(Policy::none())
             .build()?;
         Ok(Self {
@@ -1941,5 +1941,39 @@ mod saved_log_tests {
             .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "log\n");
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod mutation_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn post_keeps_default_timeout_when_get_timeout_is_shorter() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 2048];
+            let count = socket.read(&mut buffer).unwrap();
+            assert!(String::from_utf8_lossy(&buffer[..count])
+                .starts_with("POST /apps/a/builds/b/abort "));
+            std::thread::sleep(Duration::from_millis(1200));
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+        });
+        let options = NetworkOptions {
+            timeout: 1,
+            retries: 0,
+            ..NetworkOptions::default()
+        };
+        let mut client = BitriseClient::with_options("token", options).unwrap();
+        client.base_url = format!("http://{address}");
+        let result = client.abort_build("a", "b", None);
+        worker.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "POST should retain its 30-second timeout: {result:?}"
+        );
     }
 }

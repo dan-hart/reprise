@@ -128,6 +128,7 @@ fn fish_and_powershell_runtime_completions_preserve_spaces_when_available() {
     let path = std::env::join_paths(paths).unwrap();
     for (executable, shell, flags, command) in [
         ("fish", "fish", vec!["-c"], "source \"$REPRISE_TEST_COMPLETION_FILE\"; complete -C 'reprise trigger --workflow '"),
+        ("fish", "fish", vec!["-c"], "source \"$REPRISE_TEST_COMPLETION_FILE\"; complete -C 'reprise trigger --workflow te'"),
         ("pwsh", "powershell", vec!["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"], ". $env:REPRISE_TEST_COMPLETION_FILE; $line = 'reprise trigger --workflow '; (TabExpansion2 $line $line.Length).CompletionMatches | ForEach-Object { $_.CompletionText }"),
         ("pwsh", "powershell", vec!["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"], ". $env:REPRISE_TEST_COMPLETION_FILE; $line = 'reprise trigger --workflow te --app trailing'; $cursor = 'reprise trigger --workflow te'.Length; (TabExpansion2 $line $cursor).CompletionMatches | ForEach-Object { $_.CompletionText }"),
     ] {
@@ -160,5 +161,72 @@ fn project_parse_errors_never_echo_source_values() {
         let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(stderr.contains(".reprise.toml"));
         assert!(!stderr.contains("SECRET_REPRISE_MARKER"));
+    }
+}
+
+#[test]
+fn completion_uses_last_completed_profile_in_both_flag_forms() {
+    let test_home_dir = TempDir::new().unwrap();
+    fs::create_dir(test_home_dir.path().join(".reprise")).unwrap();
+    fs::write(test_home_dir.path().join(".reprise/config.toml"), "[profiles.personal.aliases]\n'personal app' = 'personal-slug'\n[profiles.work.aliases]\n'work app' = 'work-slug'\n").unwrap();
+    for words in [
+        vec!["reprise", "--profile=work", "builds", "--app", ""],
+        vec![
+            "reprise",
+            "--profile",
+            "personal",
+            "--profile=work",
+            "builds",
+            "--app",
+            "",
+        ],
+        vec![
+            "reprise",
+            "--profile=personal",
+            "--profile",
+            "work",
+            "builds",
+            "--app",
+            "",
+        ],
+    ] {
+        assert_cmd::cargo::cargo_bin_cmd!("reprise")
+            .current_dir(test_home_dir.path())
+            .env("HOME", test_home_dir.path())
+            .arg("--__complete")
+            .args(words)
+            .assert()
+            .success()
+            .stdout("work app\n");
+    }
+    if std::process::Command::new("fish")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_reprise"));
+    let mut paths = vec![binary.parent().unwrap().to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let script = test_home_dir.path().join("reprise.fish");
+    fs::write(
+        &script,
+        assert_cmd::cargo::cargo_bin_cmd!("reprise")
+            .args(["completions", "fish"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    for line in [
+        "reprise --profile=work builds --app ",
+        "reprise --profile personal --profile=work builds --app ",
+    ] {
+        let result = std::process::Command::new("fish").current_dir(test_home_dir.path()).env("HOME", test_home_dir.path()).env("PATH", std::env::join_paths(&paths).unwrap()).env("REPRISE_TEST_COMPLETION_FILE", &script).env("REPRISE_TEST_COMPLETION_LINE", line).args(["-c", "source \"$REPRISE_TEST_COMPLETION_FILE\"; complete -C \"$REPRISE_TEST_COMPLETION_LINE\""]).output().unwrap();
+        assert!(result.status.success());
+        assert_eq!(String::from_utf8_lossy(&result.stdout), "work app\n");
     }
 }

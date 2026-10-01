@@ -27,10 +27,19 @@ pub fn handle_query() -> Result<bool> {
     };
     let mut config = Config::load()?;
     let completed = &words[..words.len().saturating_sub(1)];
-    let profile = completed
-        .windows(2)
-        .find(|w| w[0] == "--profile")
-        .map(|w| w[1].as_str());
+    let mut profile = None;
+    for (index, word) in completed.iter().enumerate() {
+        if let Some(name) = word.strip_prefix("--profile=") {
+            profile = Some(name);
+        } else if word == "--profile" {
+            if let Some(name) = completed
+                .get(index + 1)
+                .filter(|name| !name.starts_with('-'))
+            {
+                profile = Some(name.as_str());
+            }
+        }
+    }
     config.apply_context(&std::env::current_dir()?, profile)?;
     for value in values(&config, words, &Paths::new()?)? {
         println!("{value}");
@@ -181,7 +190,7 @@ pub fn generate(shell: Shell) -> String {
         return 0
     fi
     typeset -A opt_args"#, 1),
-        Shell::Fish => format!("{script}\nfunction __reprise_values\n    set -l words (commandline -opc)\n    set -l current (commandline -ct)\n    command reprise --__complete $words \"$current\" 2>/dev/null\nend\ncomplete -c reprise -f -a '(__reprise_values)'\n"),
+        Shell::Fish => format!("{script}\nfunction __reprise_values\n    set -l words (commandline -opc)\n    set -l current (commandline -ct)\n    command reprise --__complete $words \"$current\" 2>/dev/null\nend\ncomplete -c reprise -f -a '(__reprise_values)'\ncomplete -c reprise -l app -s a -r -f -a '(__reprise_values)'\ncomplete -c reprise -l profile -r -f -a '(__reprise_values)'\ncomplete -c reprise -l workflow -s w -r -f -a '(__reprise_values)'\n"),
         Shell::PowerShell => script.replacen("    $commandElements = $commandAst.CommandElements", r#"    $currentStart = $cursorPosition - $wordToComplete.Length
     $words = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -le $currentStart } | ForEach-Object { $_.Extent.Text.Trim("'", '"') })
     $words += $wordToComplete.Trim("'", '"')

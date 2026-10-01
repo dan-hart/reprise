@@ -12,6 +12,7 @@ env:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}

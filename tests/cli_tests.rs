@@ -839,3 +839,56 @@ fn test_url_retry_wait_requires_retry() {
         .failure()
         .stderr(predicate::str::contains("retry"));
 }
+
+#[test]
+fn url_generation_honors_output_defaults_and_explicit_override() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".reprise")).unwrap();
+    std::fs::write(
+        dir.path().join(".reprise/config.toml"),
+        "[output]\nformat = 'json'\n[profiles.work.output]\nformat = 'pretty'\n",
+    )
+    .unwrap();
+    let output = reprise()
+        .env("HOME", dir.path())
+        .current_dir(dir.path())
+        .args(["url", "--build", "abc123"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["url"], "https://app.bitrise.io/build/abc123");
+    reprise()
+        .env("HOME", dir.path())
+        .current_dir(dir.path())
+        .args(["--profile", "work", "url", "--build", "abc123"])
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            "https://app.bitrise.io/build/abc123\n",
+        ));
+    reprise()
+        .env("HOME", dir.path())
+        .current_dir(dir.path())
+        .args(["-o", "pretty", "url", "--build", "abc123"])
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            "https://app.bitrise.io/build/abc123\n",
+        ));
+}
+
+#[test]
+fn url_generation_without_home_or_configuration_still_works() {
+    let dir = tempfile::tempdir().unwrap();
+    reprise()
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .current_dir(dir.path())
+        .args(["url", "--build", "abc123"])
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            "https://app.bitrise.io/build/abc123\n",
+        ));
+}

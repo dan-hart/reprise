@@ -27,7 +27,6 @@ fn run() -> Result<(), RepriseError> {
     }
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
-    let format = cli.output;
 
     // Handle completions command early (no config or client needed)
     if let Commands::Completions(args) = &cli.command {
@@ -38,6 +37,18 @@ fn run() -> Result<(), RepriseError> {
     // Handle URL generation early (no config or client needed)
     if let Commands::Url(args) = &cli.command {
         if commands::is_generation_mode(args) {
+            let explicit =
+                matches.value_source("output") == Some(clap::parser::ValueSource::CommandLine);
+            let format = if explicit {
+                cli.output
+            } else {
+                let mut config = match reprise::config::Paths::new() {
+                    Ok(paths) => Config::load_from(&paths)?,
+                    Err(_) => Config::default(),
+                };
+                config.apply_context(&std::env::current_dir()?, cli.profile.as_deref())?;
+                resolve_output_format(&config, cli.output, false)?
+            };
             let output = commands::url_generate(args, format)?;
             if !output.is_empty() {
                 println!("{output}");
