@@ -1,539 +1,86 @@
 # reprise
 
-A fast, feature-rich CLI for [Bitrise](https://bitrise.io).
+A Rust CLI for working with [Bitrise](https://bitrise.io): find builds, investigate failures, watch releases, and download artifacts from your terminal.
 
-> **Note:** This is an unofficial, community-maintained project and is not affiliated with, endorsed by, or supported by Bitrise. It uses the public [Bitrise API](https://api-docs.bitrise.io/) to provide CLI functionality. For official Bitrise tools and support, please visit [bitrise.io](https://bitrise.io).
+[![CI](https://github.com/dan-hart/reprise/actions/workflows/ci.yml/badge.svg)](https://github.com/dan-hart/reprise/actions)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
-[![Crates.io](https://img.shields.io/crates/v/reprise.svg)](https://crates.io/crates/reprise)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/dan-hart/reprise/ci.yml?branch=main)](https://github.com/dan-hart/reprise/actions)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dan-hart/reprise/pulls)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/codedbydan)
+Unofficial community project; not affiliated with or endorsed by Bitrise. Uses the public Bitrise API.
 
-## Features
-
-- **Fast** - Written in Rust for maximum performance
-- **Easy authentication** - Inline token support via flag or environment variable
-- **Flexible output** - Pretty terminal output by default, JSON for automation
-- **Smart defaults** - Set a default app to skip repetitive flags
-- **Named profiles** - Switch between Bitrise contexts with profile-aware defaults
-- **Build management** - List, filter, and inspect builds with ease
-- **Pipeline support** - Full pipeline management including trigger, watch, abort, and rebuild
-- **Log viewing** - View, tail, follow, and save build logs with syntax highlighting
-- **Smart filtering** - Filter builds and pipelines by status, branch, workflow, or creator (`--me`)
-- **Saved views** - Re-run common build and pipeline filters by name
-- **Diagnosis and comparison** - Triage failures and compare two builds side by side
-- **Doctor command** - Validate config, git context, and API connectivity quickly
-- **URL integration** - Paste any Bitrise URL to instantly view status, logs, or artifacts
-- **Safe bitrise.yml updates** - Automatically backs up current config before every upload
-
-## Installation
-
-### Homebrew (Recommended)
+## A typical session
 
 ```bash
+reprise builds --current-branch --status failed
+reprise diagnose --latest --current-branch --status failed
+reprise log --latest --current-branch --status failed --tail 50
+```
+
+Illustrative diagnosis output (actual values depend on your build):
+
+```text
+Build diagnosis for #1234
+Status: failed
+Workflow: primary
+Likely category: tests
+First error: Test Case 'CheckoutTests.testPayment' failed
+Next step: Open the full log and inspect the first failing test.
+```
+
+## Install
+
+```sh
 brew install dan-hart/tap/reprise
+# Or:
+cargo install --git https://github.com/dan-hart/reprise --tag v0.2.0 --locked
 ```
 
-### Cargo
+Prebuilt binaries and checksums are available on [GitHub Releases](https://github.com/dan-hart/reprise/releases). If switching from Cargo to Homebrew, check `which reprise` before uninstalling your old Cargo copy.
+
+## Get started in five commands
+
+Get a personal access token from [Bitrise security settings](https://app.bitrise.io/me/profile#/security), then:
 
 ```bash
-cargo install reprise
-```
-
-### Binary Releases
-
-Download the latest binary for your platform from [GitHub Releases](https://github.com/dan-hart/reprise/releases).
-
-### Switching from Cargo to Homebrew
-
-If you previously installed via Cargo and want to switch to Homebrew:
-
-```bash
-# Install via Homebrew
-brew install dan-hart/tap/reprise
-
-# Verify Homebrew version is active
-which reprise  # Should show /opt/homebrew/bin/reprise
-
-# Remove the Cargo version
-cargo uninstall reprise
-```
-
-## Quick Start
-
-### 1. Authenticate
-
-You can authenticate in three ways (in order of priority):
-
-```bash
-# Option 1: Inline flag (highest priority)
-reprise --token YOUR_TOKEN apps
-
-# Option 2: Environment variable
-export BITRISE_TOKEN=YOUR_TOKEN
-reprise apps
-
-# Option 3: Config file (persistent)
 reprise config init
-```
-
-### 2. Set a Default App
-
-```bash
-# List your apps
 reprise apps
-
-# Set default app by slug or name
-reprise app set my-app-slug
-```
-
-### 3. View Builds
-
-```bash
-# List recent builds
+reprise app set example-app
+reprise doctor
 reprise builds
-
-# Filter by status
-reprise builds --status failed
-
-# Show running worker time, workflow averages, or progress estimates
-reprise builds --elapsed
-reprise builds --average
-reprise builds --progress
-
-# Receive a desktop notification when a build, workflow, or pipeline completes
-reprise build abc123 --follow --notify
-reprise trigger --workflow primary --wait --notify
-reprise pipeline watch abc123 --notify
-
-# View a specific build
-reprise build abc123
-
-# View build logs
-reprise log abc123
 ```
 
-## Commands
+`config init` prompts for your token. Alternatively, set `BITRISE_TOKEN` in your environment. `--token` overrides environment and configured credentials. Do not commit tokens to your repository.
 
-| Command | Alias | Description |
-|---------|-------|-------------|
-| `reprise apps` | | List all accessible Bitrise apps |
-| `reprise app show` | `a show` | Show current default app |
-| `reprise app set <slug>` | `a set` | Set default app |
-| `reprise builds` | `b` | List builds for an app |
-| `reprise build <slug>` | | Show build details |
-| `reprise log <slug>` | `logs`, `l` | View build logs |
-| `reprise trigger` | | Trigger a new build |
-| `reprise artifacts` | `art` | List or download build artifacts |
-| `reprise abort <slug>` | | Abort a running build |
-| `reprise pipelines` | `pl` | List pipelines for an app |
-| `reprise pipeline show <id>` | `p show` | Show pipeline details |
-| `reprise pipeline trigger <name>` | `p trigger` | Trigger a new pipeline |
-| `reprise pipeline watch <id>` | `p watch` | Watch pipeline progress |
-| `reprise pipeline abort <id>` | `p abort` | Abort a running pipeline |
-| `reprise pipeline rebuild <id>` | `p rebuild` | Rebuild a pipeline |
-| `reprise doctor` | | Validate config, token, git context, and API access |
-| `reprise diagnose <slug>` | | Triage a build failure or inspect the latest failing build |
-| `reprise compare <left> <right>` | | Compare two builds side by side |
-| `reprise view <subcommand>` | | Save, inspect, and run named build or pipeline views |
-| `reprise url <url>` | | Parse and interact with Bitrise URLs |
-| `reprise config init` | | Interactive configuration setup |
-| `reprise config show` | | Display current configuration |
-| `reprise config set` | | Set a configuration value |
-| `reprise config path` | | Show config file location |
-| `reprise config alias` | | Manage app aliases |
-| `reprise config profile` | | Manage named Bitrise profiles |
-| `reprise yml get` | | Fetch current bitrise.yml |
-| `reprise yml set --file <path>` | | Upload bitrise.yml with automatic pre-update backup |
-
-## Global Options
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--token <TOKEN>` | | Bitrise API token (overrides config) |
-| `--output <FORMAT>` | `-o` | Output format: `pretty` (default) or `json` |
-| `--quiet` | `-q` | Minimal output |
-| `--verbose` | `-v` | Show debug information |
-| `--help` | `-h` | Show help |
-| `--version` | `-V` | Show version |
-
-## Configuration
-
-Configuration is stored in `~/.reprise/config.toml`:
-
-```toml
-[api]
-token = "your_bitrise_api_token"
-
-[defaults]
-app_slug = "your-default-app"
-app_name = "Your App Name"
-
-[output]
-format = "pretty"  # or "json"
-
-[aliases]
-ios = "abc123def456"
-android = "xyz789ghi012"
-
-active_profile = "secondary"
-
-[profiles.secondary.api]
-token = "your_secondary_bitrise_api_token"
-
-[profiles.secondary.defaults]
-app_slug = "secondary-app"
-
-[profiles.secondary.output]
-format = "pretty"
-
-[views.failures]
-kind = "builds"
-status = "failed"
-branch = "main"
-since = "1d"
-```
-
-### App Aliases
-
-Create shortcuts for frequently used apps:
+## Everyday commands
 
 ```bash
-# Set an alias
-reprise config alias ios abc123def456
-
-# Use the alias anywhere you'd use an app slug
-reprise builds --app ios
-reprise trigger --app ios --workflow deploy
-
-# List all aliases
-reprise config alias
-
-# Show a specific alias
-reprise config alias ios
-
-# Remove an alias
-reprise config alias ios --remove
+# Filter builds for your PR
+reprise builds --pr 123 --status failed
+# Watch elapsed worker time and estimated progress
+reprise builds --watch --elapsed --progress
+# Trigger and receive a completion notification
+reprise trigger --workflow primary --current-branch --wait --notify
+# Download the latest successful app package
+reprise artifacts --latest --status success --filter '*.ipa' --download ./artifacts
+# Use a profile for this invocation
+reprise --profile work builds
+# Install shell completions; does not modify your shell rc
+reprise completions zsh --install
 ```
 
-### Profiles
-
-Create named Bitrise contexts with their own token and default app:
-
-```bash
-# Create or update a profile
-reprise config profile secondary --token YOUR_TOKEN --app abc123def456
-
-# Switch to it
-reprise config profile secondary --use
-
-# List profiles
-reprise config profile
-```
-
-### Saved Views
-
-Store common filters and run them later:
-
-```bash
-# Save a "failed builds on main in the last day" view
-reprise view save failures --kind builds --status failed --branch main --since 1d
-
-# Inspect it
-reprise view show failures
-
-# Run it
-reprise view run failures
-```
-
-### Getting Your API Token
-
-1. Go to [Bitrise Account Settings](https://app.bitrise.io/me/profile#/security)
-2. Scroll to "Personal Access Tokens"
-3. Generate a new token with appropriate permissions
-
-## JSON Output
-
-All commands support JSON output for scripting and automation:
-
-```bash
-# Get builds as JSON
-reprise builds --output json
-
-# Pipe to jq for processing
-reprise builds -o json | jq '.[] | select(.status == "failed")'
-```
-
-## Examples
-
-### List Failed Builds on a Branch
-
-```bash
-reprise builds --status failed --branch main --limit 10
-```
-
-### Save Build Log to File
-
-```bash
-reprise log abc123 --save build.log
-```
-
-### Safely Update bitrise.yml
-
-```bash
-# Fetch and inspect current config
-reprise yml get --save ./current.bitrise.yml
-
-# Upload a new config (reprise auto-saves a timestamped backup first)
-reprise yml set --file ./bitrise.yml
-```
-
-### View Last 50 Lines of a Log
-
-```bash
-reprise log abc123 --tail 50
-```
-
-### Filter Apps by Name
-
-```bash
-reprise apps --filter "ios"
-```
-
-### Use with Different App (Override Default)
-
-```bash
-reprise builds --app other-app-slug
-```
-
-### Filter Builds by Creator
-
-```bash
-# Show only your builds
-reprise builds --me
-
-# Show builds by a specific user
-reprise builds --triggered-by alice
-```
-
-### Filter Builds by Pull Request
-
-```bash
-# Show builds for a specific PR
-reprise builds --pr 1234
-
-# Combined with other filters
-reprise builds --pr 1234 --status success
-```
-
-### Filter and Download Artifacts
-
-```bash
-# List artifacts for a build
-reprise artifacts abc123
-
-# Filter artifacts by pattern
-reprise artifacts abc123 --filter "*.ipa"
-
-# Exclude certain artifacts
-reprise artifacts abc123 --exclude "*.dSYM*"
-
-# Download only matching artifacts
-reprise artifacts abc123 --filter "*.ipa" --download .
-
-# Combine filter and exclude
-reprise artifacts abc123 --filter "test-*" --exclude "*-debug*"
-```
-
-### Work with Bitrise URLs
-
-```bash
-# View build status from URL
-reprise url https://app.bitrise.io/build/abc123
-
-# View build logs from URL
-reprise url https://app.bitrise.io/build/abc123 --logs
-
-# Follow live log output
-reprise url https://app.bitrise.io/build/abc123 --follow
-
-# List artifacts from build URL
-reprise url https://app.bitrise.io/build/abc123 --artifacts
-
-# Set default app from URL
-reprise url https://app.bitrise.io/app/xyz789 --set-default
-
-# Watch build progress with notifications
-reprise url https://app.bitrise.io/build/abc123 --watch --notify
-
-# Abort a running build from URL
-reprise url https://app.bitrise.io/build/abc123 --abort
-reprise url https://app.bitrise.io/build/abc123 --abort --reason "Canceling for hotfix"
-reprise url https://app.bitrise.io/build/abc123 --abort -y  # Skip confirmation
-
-# Retry/rebuild from URL
-reprise url https://app.bitrise.io/build/abc123 --retry
-reprise url https://app.bitrise.io/build/abc123 --retry --wait  # Wait for completion
-
-# Download all artifacts from build URL
-reprise url https://app.bitrise.io/build/abc123 --download
-reprise url https://app.bitrise.io/build/abc123 --download ./output
-```
-
-### Pipeline Management
-
-```bash
-# List pipelines
-reprise pipelines
-
-# Show only your pipelines
-reprise pipelines --me
-
-# Trigger a pipeline
-reprise pipeline trigger my-pipeline --branch main
-
-# Watch pipeline progress
-reprise pipeline watch abc123 --notify
-
-# Rebuild failed workflows only
-reprise pipeline rebuild abc123 --partial
-```
-
-## Development
-
-### Prerequisites
-
-- Rust 1.70 or later
-- A Bitrise account with API access
-
-### Building from Source
-
-```bash
-git clone https://github.com/dan-hart/reprise.git
-cd reprise
-cargo build --release
-```
-
-### Running Tests
-
-```bash
-cargo test
-```
-
-### Code Style
-
-This project uses standard Rust formatting:
-
-```bash
-cargo fmt
-cargo clippy
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### "API token not configured"
-
-You need to authenticate first. Choose one of these options:
-
-```bash
-# Set up persistent configuration
-reprise config init
-
-# Or use environment variable
-export BITRISE_TOKEN=your_token_here
-
-# Or provide token inline
-reprise --token your_token_here apps
-```
-
-#### "No default app configured"
-
-Set a default app to avoid specifying `--app` on every command:
-
-```bash
-# List your apps to find the slug
-reprise apps
-
-# Set the default
-reprise app set your-app-slug
-```
-
-#### `--me` flag not matching webhook-triggered builds
-
-The `--me` flag matches both your Bitrise username and GitHub webhook patterns (`webhook-github/<username>`). If webhook-triggered builds aren't showing up:
-
-```bash
-# Configure your GitHub username
-git config --global github.user YOUR_GITHUB_USERNAME
-```
-
-#### Permission denied errors (401/403)
-
-- Verify your API token is valid and not expired
-- Check that the token has the required permissions for the operation
-- Regenerate your token at [Bitrise Security Settings](https://app.bitrise.io/me/profile#/security)
-
-#### Rate limiting
-
-The Bitrise API has rate limits. If you're hitting limits:
-
-- Reduce polling frequency with `--interval` (default: 5 seconds)
-- Use `--limit` to fetch fewer results
-- Wait a few minutes before retrying
-
-### Exit Codes
-
-reprise uses standard Unix exit codes:
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 2 | Usage/argument error |
-| 65 | Data parsing error |
-| 66 | Resource not found (app, build, etc.) |
-| 69 | Service unavailable / network error |
-| 74 | I/O error |
-| 77 | Permission denied |
-| 78 | Configuration error |
-
-### Getting Help
-
-```bash
-# General help
-reprise --help
-
-# Command-specific help
-reprise builds --help
-reprise pipeline --help
-```
-
-## Security
-
-- API tokens are stored in `~/.reprise/config.toml` (outside any repository)
-- Tokens are masked in output (only first/last 4 characters shown)
-- git-secrets is configured to prevent accidental credential commits
-
-See [SECURITY.md](SECURITY.md) for more details.
+Builds are individual workflow executions. Pipelines coordinate multiple workflows/stages: use `pipeline watch` to track the whole pipeline. Progress is an estimate based on recent completed workflow durations, not a measurement from Bitrise.
+
+## Learn more
+
+- [Cookbook: complete workflows and expected results](docs/cookbook.md)
+- [Configuration, profiles, project defaults, and completions](docs/configuration.md)
+- [Generated command reference](docs/cli-reference.md)
+- [Networking, filtering, output, and troubleshooting](docs/behavior.md)
+- [Development and verification](docs/development.md)
+- [Changes in v0.2.0](CHANGELOG.md)
+- [Security policy](SECURITY.md)
+
+Run `reprise --help` or `reprise builds --help` for command help. Aliases include `b` (builds), `l` (log), `p` (pipeline), and `pl` (pipelines).
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `cargo fmt` and `cargo clippy`
-5. Submit a pull request
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with [clap](https://github.com/clap-rs/clap) for CLI parsing
-- Inspired by other great Rust CLIs like [ripgrep](https://github.com/BurntSushi/ripgrep), [bat](https://github.com/sharkdp/bat), and [gh](https://github.com/cli/cli)
+Open an issue or pull request on [GitHub](https://github.com/dan-hart/reprise). Build with `cargo build`, then run the checks in [development docs](docs/development.md). Licensed under GPL-3.0-only; see [LICENSE](LICENSE).

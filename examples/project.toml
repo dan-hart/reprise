@@ -1,0 +1,10 @@
+# Copy to .reprise.toml at the root of your repository. No credentials here.
+app = "example-work-app"
+workflow = "primary"
+profile = "work"
+
+[views.failures]
+kind = "builds"
+status = "failed"
+branch = "main"
+since = "1d"

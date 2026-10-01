@@ -79,6 +79,7 @@ pub fn builds(
 struct FetchedBuilds {
     builds: Vec<Build>,
     timings: Vec<output::BuildTiming>,
+    metadata: crate::bitrise::SearchMetadata,
 }
 
 /// Watch builds continuously until interrupted
@@ -191,91 +192,41 @@ fn fetch_builds(
         args.branch.clone()
     };
 
-    // Fetch extra builds when filtering client-side to ensure we have enough results
-    // Cap at 50 (API maximum)
-    let fetch_limit = if me_filter.is_some() || triggered_by_filter.is_some() {
-        args.limit.saturating_mul(4).min(50)
-    } else {
-        args.limit.min(50)
-    };
-
-    let response = client.list_builds(
+    let since_threshold = args.since.as_ref().map(|s| parse_since(s)).transpose()?;
+    let workflow_contains_lower = args.workflow_contains.as_ref().map(|s| s.to_lowercase());
+    let triggered_by_lower = triggered_by_filter.as_ref().map(|s| s.to_lowercase());
+    let response = client.search_builds(
         app_slug,
         status,
         branch_filter.as_deref(),
         args.workflow.as_deref(),
-        fetch_limit,
+        args.limit,
+        |b| {
+            let user_matches = if let Some((bitrise, github)) = me_filter.as_ref() {
+                b.triggered_by
+                    .as_ref()
+                    .is_some_and(|user| matches_user(user, bitrise, github.as_deref()))
+            } else {
+                triggered_by_lower.as_ref().is_none_or(|user| {
+                    b.triggered_by
+                        .as_ref()
+                        .is_some_and(|value| value.to_lowercase().contains(user))
+                })
+            };
+            user_matches
+                && workflow_contains_lower
+                    .as_ref()
+                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
+                && since_threshold.is_none_or(|threshold| b.triggered_at >= threshold)
+                && args.pr.is_none_or(|pr| b.pull_request_id == Some(pr))
+        },
     )?;
-
+    let metadata = response.metadata;
+    let builds = response.data;
     let history = if args.average || args.progress {
-        Some(client.list_builds(app_slug, None, None, None, 50)?.data)
+        Some(client.timing_history(app_slug)?)
     } else {
         None
-    };
-
-    // Parse --since threshold if provided
-    let since_threshold = args.since.as_ref().map(|s| parse_since(s)).transpose()?;
-
-    // Apply client-side filters
-    let workflow_contains_lower = args.workflow_contains.as_ref().map(|s| s.to_lowercase());
-
-    // PR number filter
-    let pr_filter = args.pr;
-
-    let builds: Vec<Build> = if let Some((ref bitrise_username, ref github_username)) = me_filter {
-        // --me flag: match both Bitrise username and webhook-github/<github-username>
-        response
-            .data
-            .into_iter()
-            .filter(|b| {
-                b.triggered_by
-                    .as_ref()
-                    .map(|t| matches_user(t, bitrise_username, github_username.as_deref()))
-                    .unwrap_or(false)
-            })
-            .filter(|b| {
-                workflow_contains_lower
-                    .as_ref()
-                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
-            })
-            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
-            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
-            .take(args.limit as usize)
-            .collect()
-    } else if let Some(ref user) = triggered_by_filter {
-        // --triggered-by flag: case-insensitive partial match (existing behavior)
-        let user_lower = user.to_lowercase();
-        response
-            .data
-            .into_iter()
-            .filter(|b| {
-                b.triggered_by
-                    .as_ref()
-                    .map(|t| t.to_lowercase().contains(&user_lower))
-                    .unwrap_or(false)
-            })
-            .filter(|b| {
-                workflow_contains_lower
-                    .as_ref()
-                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
-            })
-            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
-            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
-            .take(args.limit as usize)
-            .collect()
-    } else {
-        response
-            .data
-            .into_iter()
-            .filter(|b| {
-                workflow_contains_lower
-                    .as_ref()
-                    .is_none_or(|pattern| b.triggered_workflow.to_lowercase().contains(pattern))
-            })
-            .filter(|b| since_threshold.is_none_or(|threshold| b.triggered_at >= threshold))
-            .filter(|b| pr_filter.is_none_or(|pr_num| b.pull_request_id == Some(pr_num)))
-            .take(args.limit as usize)
-            .collect()
     };
 
     let timings = if args.elapsed || args.average || args.progress {
@@ -292,7 +243,11 @@ fn fetch_builds(
         Vec::new()
     };
 
-    Ok(FetchedBuilds { builds, timings })
+    Ok(FetchedBuilds {
+        builds,
+        timings,
+        metadata,
+    })
 }
 
 /// Format fetched builds with optional timing metrics.
@@ -301,6 +256,21 @@ fn format_fetched_builds(
     args: &BuildsArgs,
     format: OutputFormat,
 ) -> Result<String> {
+    if format == OutputFormat::Json && args.with_search_metadata {
+        let mut plain_args = args.clone();
+        plain_args.with_search_metadata = false;
+        let builds: serde_json::Value =
+            serde_json::from_str(&format_fetched_builds(fetched, &plain_args, format)?)?;
+        return Ok(serde_json::to_string_pretty(
+            &serde_json::json!({ "builds": builds, "search": fetched.metadata }),
+        )?);
+    }
+    if format == OutputFormat::Pretty && fetched.metadata.capped {
+        eprintln!(
+            "warning: build search capped after {} builds; raise --search-limit to search further",
+            fetched.metadata.scanned
+        );
+    }
     if args.elapsed || args.average || args.progress {
         output::format_builds_with_timing(
             &fetched.builds,
@@ -399,6 +369,7 @@ mod tests {
 
     fn args_with_timing(average: bool, progress: bool) -> BuildsArgs {
         BuildsArgs {
+            with_search_metadata: false,
             app: Some("test-app".to_string()),
             status: None,
             branch: None,
@@ -528,5 +499,45 @@ mod tests {
         fetch_and_format_builds(&client, &Config::default(), &args, OutputFormat::Json).unwrap();
 
         main.assert();
+    }
+    #[test]
+    fn performance_watch_refreshes_cache_history_and_preserves_json_array() {
+        let mut server = Server::new();
+        let main = server
+            .mock("GET", "/apps/test-app/builds?limit=25")
+            .with_body(list_response(&[build("primary", None, None)]))
+            .expect(3)
+            .create();
+        let history = server
+            .mock("GET", "/apps/test-app/builds?limit=50")
+            .with_body(list_response(&[build("primary", None, None)]))
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let mut args = args_with_timing(true, false);
+        let start = std::time::Instant::now();
+        for _ in 0..2 {
+            let json: serde_json::Value = serde_json::from_str(
+                &fetch_and_format_builds(&client, &Config::default(), &args, OutputFormat::Json)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(json.is_array());
+        }
+        args.with_search_metadata = true;
+        let json: serde_json::Value = serde_json::from_str(
+            &fetch_and_format_builds(&client, &Config::default(), &args, OutputFormat::Json)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["search"]["scanned"], 1);
+        assert_eq!(json["search"]["capped"], false);
+        assert!(json["builds"].is_array());
+        eprintln!(
+            "performance_watch: three refreshes, 4 HTTP requests (3 list + 1 history), {:?}",
+            start.elapsed()
+        );
+        main.assert();
+        history.assert();
     }
 }

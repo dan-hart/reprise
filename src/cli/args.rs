@@ -1,4 +1,4 @@
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,8 @@ Quick Start:
   1. Set your token:  export BITRISE_TOKEN=your_token
   2. List your apps:  reprise apps
   3. Set default app: reprise app set my-app
-  4. View builds:     reprise builds
+  4. Check setup:     reprise doctor
+  5. View builds:     reprise builds
 
 Environment Variables:
   BITRISE_TOKEN    API token (can also use --token flag)
@@ -32,11 +33,29 @@ Aliases:
   Many commands have short aliases: builds (b), log (l, logs),
   app (a), pipelines (pl), pipeline (p), artifacts (art)
 
+Cookbook: https://github.com/dan-hart/reprise/blob/main/docs/cookbook.md
 Documentation: https://github.com/dan-hart/reprise")]
 pub struct Cli {
+    /// Per-GET attempt timeout in seconds
+    #[arg(long, global = true, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+    pub timeout: u64,
+    /// Retry transient GET failures (mutations are never retried)
+    #[arg(long, global = true, default_value_t = 2, value_parser = clap::value_parser!(u32).range(0..=5))]
+    pub retries: u32,
+    /// Artifact and saved-log transfer timeout in seconds
+    #[arg(long, global = true, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..))]
+    pub download_timeout: u64,
+    /// Maximum builds scanned for local filters and latest selectors
+    #[arg(long, global = true, default_value_t = 500, value_parser = clap::value_parser!(u32).range(1..))]
+    pub search_limit: u32,
+
     /// Bitrise API token (overrides config file and BITRISE_TOKEN env var)
     #[arg(long, global = true, env = "BITRISE_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
+
+    /// Temporary named profile (does not change the saved active profile)
+    #[arg(long, global = true)]
+    pub profile: Option<String>,
 
     /// Output format: 'pretty' for human-readable, 'json' for scripting
     #[arg(short, long, value_enum, default_value = "pretty", global = true)]
@@ -371,7 +390,9 @@ Examples:
   reprise doctor -o json
 
 Checks configuration, active profile, token availability, default app,
-git context, and API connectivity when credentials are present.")]
+git context, and API connectivity when credentials are present.
+Prints the report before returning nonzero for actionable failures.
+Next: reprise config init, then reprise apps and reprise app set <slug>.")]
     Doctor(DoctorArgs),
 
     /// Diagnose a failed or suspicious build
@@ -381,8 +402,11 @@ Examples:
   reprise diagnose --latest --status failed
   reprise diagnose --latest --current-branch
 
-Diagnosis includes build metadata, likely failure signals, artifact
-context, and suggested next commands.")]
+Diagnosis includes concrete failure signals, confidence, numbered log context,
+and explicit unavailable evidence. Confidence describes a signal, not a root cause.
+
+Next: reprise log --latest --status failed --tail 80
+      reprise compare <failed-build> <successful-build>")]
     Diagnose(DiagnoseArgs),
 
     /// Compare two builds side by side
@@ -418,7 +442,14 @@ Installation:
   Bash:   Source the file in your .bashrc
   Zsh:    Place in a directory in your $fpath, then run 'compinit'
   Fish:   Place in ~/.config/fish/completions/
-  PowerShell: Add 'Import-Module ./reprise.ps1' to your profile")]
+  PowerShell: Dot-source with . ./reprise.ps1
+
+Convenience:
+  reprise completions zsh --install
+  reprise completions zsh --refresh-workflows ./bitrise.yml
+
+Installation prints activation instructions and never edits shell startup files.
+Value suggestions read local configuration and cached workflows without API calls.")]
     Completions(CompletionsArgs),
 }
 
@@ -475,8 +506,11 @@ prompted to set one. Use 'reprise app set' to change it.")]
 }
 
 /// Arguments for the builds command
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct BuildsArgs {
+    /// Include scanned/capped search metadata in a JSON envelope
+    #[arg(long)]
+    pub with_search_metadata: bool,
     /// App slug (overrides default app)
     #[arg(short, long)]
     pub app: Option<String>,
@@ -868,7 +902,7 @@ Examples:
 pub struct TriggerArgs {
     /// Workflow name to run (as defined in bitrise.yml)
     #[arg(short, long)]
-    pub workflow: String,
+    pub workflow: Option<String>,
 
     /// Branch to build (defaults to repo's default branch)
     #[arg(short, long)]
@@ -1415,17 +1449,21 @@ pub struct CompletionsArgs {
     /// Shell to generate completions for
     #[arg(value_enum)]
     pub shell: Shell,
+    /// Install into a shell completion directory without editing shell startup files
+    #[arg(long)]
+    pub install: bool,
+    /// Override the installation directory
+    #[arg(long, requires = "install", value_hint = ValueHint::DirPath)]
+    pub directory: Option<std::path::PathBuf>,
+    /// Explicitly refresh local workflow suggestions from a bitrise.yml file
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    pub refresh_workflows: Option<std::path::PathBuf>,
 }
 
 impl Cli {
     /// Generate shell completions to stdout
     pub fn print_completions(shell: Shell) {
-        clap_complete::generate(
-            shell,
-            &mut Cli::command(),
-            "reprise",
-            &mut std::io::stdout(),
-        );
+        print!("{}", super::completions::generate(shell));
     }
 }
 

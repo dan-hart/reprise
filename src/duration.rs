@@ -43,25 +43,41 @@ fn parse_named_duration(s: &str, now: DateTime<Local>) -> Option<DateTime<Local>
         "today" => {
             // Start of today (midnight)
             let today = now.date_naive();
-            Some(Local.from_local_datetime(&today.and_hms_opt(0, 0, 0)?).single()?)
+            Some(
+                Local
+                    .from_local_datetime(&today.and_hms_opt(0, 0, 0)?)
+                    .single()?,
+            )
         }
         "yesterday" => {
             // Start of yesterday (midnight)
             let yesterday = now.date_naive() - Duration::days(1);
-            Some(Local.from_local_datetime(&yesterday.and_hms_opt(0, 0, 0)?).single()?)
+            Some(
+                Local
+                    .from_local_datetime(&yesterday.and_hms_opt(0, 0, 0)?)
+                    .single()?,
+            )
         }
         "this-week" | "thisweek" | "week" => {
             // Start of current week (Monday midnight)
             let today = now.date_naive();
             let days_since_monday = today.weekday().num_days_from_monday();
             let monday = today - Duration::days(days_since_monday as i64);
-            Some(Local.from_local_datetime(&monday.and_hms_opt(0, 0, 0)?).single()?)
+            Some(
+                Local
+                    .from_local_datetime(&monday.and_hms_opt(0, 0, 0)?)
+                    .single()?,
+            )
         }
         "this-month" | "thismonth" | "month" => {
             // Start of current month
             let today = now.date_naive();
             let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)?;
-            Some(Local.from_local_datetime(&first.and_hms_opt(0, 0, 0)?).single()?)
+            Some(
+                Local
+                    .from_local_datetime(&first.and_hms_opt(0, 0, 0)?)
+                    .single()?,
+            )
         }
         _ => None,
     }
@@ -160,7 +176,10 @@ mod tests {
         let result = parse_since("today").unwrap();
         let now = Local::now();
         let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-        let expected = Local.from_local_datetime(&today_start).unwrap().with_timezone(&Utc);
+        let expected = Local
+            .from_local_datetime(&today_start)
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(result, expected);
     }
 
@@ -170,7 +189,10 @@ mod tests {
         let now = Local::now();
         let yesterday = now.date_naive() - Duration::days(1);
         let yesterday_start = yesterday.and_hms_opt(0, 0, 0).unwrap();
-        let expected = Local.from_local_datetime(&yesterday_start).unwrap().with_timezone(&Utc);
+        let expected = Local
+            .from_local_datetime(&yesterday_start)
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(result, expected);
     }
 
@@ -182,7 +204,10 @@ mod tests {
         let days_since_monday = today.weekday().num_days_from_monday();
         let monday = today - Duration::days(days_since_monday as i64);
         let monday_start = monday.and_hms_opt(0, 0, 0).unwrap();
-        let expected = Local.from_local_datetime(&monday_start).unwrap().with_timezone(&Utc);
+        let expected = Local
+            .from_local_datetime(&monday_start)
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(result, expected);
     }
 

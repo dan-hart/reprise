@@ -1,4 +1,5 @@
 mod paths;
+pub mod project;
 mod settings;
 
 pub use paths::Paths;

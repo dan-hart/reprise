@@ -11,7 +11,7 @@ use super::common::{
 use crate::bitrise::BitriseClient;
 use crate::cli::args::{OutputFormat, TriggerArgs};
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{RepriseError, Result};
 
 /// Handle the trigger command
 pub fn trigger(
@@ -20,6 +20,9 @@ pub fn trigger(
     args: &TriggerArgs,
     format: OutputFormat,
 ) -> Result<String> {
+    let workflow = args.workflow.as_deref().or(config.default_workflow())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| RepriseError::InvalidArgument("the following required arguments were not provided: --workflow <WORKFLOW>. Pass --workflow or set workflow in .reprise.toml.".into()))?;
     // Get app slug from args or default
     let app_slug = resolve_app_slug(args.app.as_deref(), config)?;
     let branch = if args.current_branch {
@@ -31,7 +34,7 @@ pub fn trigger(
     // Build trigger params
     let params = crate::bitrise::TriggerParams {
         branch,
-        workflow_id: args.workflow.clone(),
+        workflow_id: workflow.to_string(),
         commit_message: args.message.clone(),
         environments: args.env.clone(),
     };

@@ -1,0 +1,24 @@
+# Root keys must precede table headers.
+active_profile = "work"
+
+[api]
+# Prefer BITRISE_TOKEN or locally configured tokens.
+
+[defaults]
+app_slug = "example-app"
+
+[output]
+format = "pretty"
+
+[aliases]
+ios = "example-ios-app"
+android = "example-android-app"
+
+[profiles.work.defaults]
+app_slug = "example-work-app"
+
+[views.failures]
+kind = "builds"
+status = "failed"
+branch = "main"
+since = "1d"
