@@ -1,6 +1,83 @@
+use is_terminal::IsTerminal;
 use reqwest::blocking::Client;
+use reqwest::blocking::Response;
 use reqwest::redirect::Policy;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone)]
+pub struct NetworkOptions {
+    pub timeout: u64,
+    pub retries: u32,
+    pub download_timeout: u64,
+    pub search_limit: u32,
+    pub quiet: bool,
+}
+impl Default for NetworkOptions {
+    fn default() -> Self {
+        Self {
+            timeout: 30,
+            retries: 2,
+            download_timeout: 600,
+            search_limit: 500,
+            quiet: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SearchMetadata {
+    pub scanned: u32,
+    pub capped: bool,
+}
+#[derive(Debug)]
+pub struct BuildSearch {
+    pub data: Vec<Build>,
+    pub metadata: SearchMetadata,
+}
+
+struct ChunkReader {
+    chunks: std::vec::IntoIter<LogChunk>,
+    current: std::io::Cursor<String>,
+}
+impl Read for ChunkReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let count = self.current.read(buffer)?;
+            if count > 0 {
+                return Ok(count);
+            }
+            match self.chunks.next() {
+                Some(chunk) => self.current = std::io::Cursor::new(chunk.chunk),
+                None => return Ok(0),
+            }
+        }
+    }
+}
+
+fn retry_delay(header: Option<&reqwest::header::HeaderValue>, attempt: u32) -> Option<Duration> {
+    let seconds = header.and_then(|v| v.to_str().ok()).and_then(|v| {
+        v.parse::<u64>().ok().or_else(|| {
+            chrono::DateTime::parse_from_rfc2822(v).ok().map(|date| {
+                (date.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                    .num_seconds()
+                    .max(0) as u64
+            })
+        })
+    });
+    if header.is_some() && seconds.is_none() {
+        return None;
+    }
+    let delay = seconds
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_millis(100 * (1 << attempt)));
+    (delay <= Duration::from_secs(30)).then_some(delay)
+}
 use url::Url;
 
 use super::types::*;
@@ -29,71 +106,132 @@ pub struct BitriseClient {
     client: Client,
     token: String,
     base_url: String,
+    pub options: NetworkOptions,
+    me_cache: Mutex<Option<(Instant, UserResponse)>>,
+    history_cache: Mutex<HashMap<String, (Instant, Vec<Build>)>>,
 }
 
 impl BitriseClient {
-    /// Create a new client from configuration
     pub fn new(config: &Config) -> Result<Self> {
-        let token = config.require_token()?.to_string();
-
-        let client = Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(30))
-            .redirect(Policy::limited(5))
-            .build()?;
-
-        Ok(Self {
-            client,
-            token,
-            base_url: DEFAULT_BASE_URL.to_string(),
-        })
+        Self::with_options(config.require_token()?, config.network.clone())
     }
 
-    /// Create a new client with an explicit token
     pub fn with_token(token: impl Into<String>) -> Result<Self> {
+        Self::with_options(token, NetworkOptions::default())
+    }
+
+    pub fn with_options(token: impl Into<String>, options: NetworkOptions) -> Result<Self> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(30))
-            .redirect(Policy::limited(5))
+            .timeout(Duration::from_secs(options.timeout))
+            .redirect(Policy::none())
             .build()?;
-
         Ok(Self {
             client,
             token: token.into(),
-            base_url: DEFAULT_BASE_URL.to_string(),
+            base_url: DEFAULT_BASE_URL.into(),
+            options,
+            me_cache: Mutex::new(None),
+            history_cache: Mutex::new(HashMap::new()),
         })
     }
 
-    /// Create a new client with custom base URL (for testing)
     #[cfg(test)]
     pub fn with_base_url(token: impl Into<String>, base_url: impl Into<String>) -> Result<Self> {
-        let client = Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(30))
-            .redirect(Policy::limited(5))
-            .build()?;
+        let mut client = Self::with_token(token)?;
+        client.base_url = base_url.into();
+        Ok(client)
+    }
 
-        Ok(Self {
-            client,
-            token: token.into(),
-            base_url: base_url.into(),
-        })
+    fn send_get(&self, url: &str, authenticated: bool, timeout: u64) -> Result<Response> {
+        let mut destination = url.to_string();
+        for redirect in 0..=5 {
+            let mut response = None;
+            for attempt in 0..=self.options.retries.min(5) {
+                let mut request = self
+                    .client
+                    .get(&destination)
+                    .timeout(Duration::from_secs(timeout));
+                if authenticated {
+                    request = request.header("Authorization", &self.token);
+                }
+                match request.send() {
+                    Ok(result) => {
+                        let status = result.status();
+                        if (status.as_u16() == 429 || status.is_server_error())
+                            && attempt < self.options.retries.min(5)
+                        {
+                            let header = result.headers().get(reqwest::header::RETRY_AFTER);
+                            let delay = retry_delay(header, attempt);
+                            if let Some(delay) = delay {
+                                std::thread::sleep(delay);
+                                continue;
+                            }
+                            let hint = header
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("invalid value")
+                                .to_string();
+                            return Err(RepriseError::api(status.as_u16(), format!("Retry-After {hint:?} exceeds the 30-second retry wait limit or is invalid; wait before retrying. {}", result.text().unwrap_or_default())));
+                        }
+                        response = Some(result);
+                        break;
+                    }
+                    Err(error)
+                        if (error.is_connect() || error.is_timeout())
+                            && attempt < self.options.retries.min(5) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(100 * (1 << attempt)));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            let response = response.ok_or_else(|| {
+                RepriseError::InvalidArgument("Request did not produce a response".into())
+            })?;
+            if !authenticated && response.status().is_redirection() {
+                if redirect == 5 {
+                    return Err(RepriseError::InvalidArgument(
+                        "Too many download redirects".into(),
+                    ));
+                }
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| {
+                        RepriseError::InvalidArgument("Missing redirect location".into())
+                    })?;
+                destination = Url::parse(&destination)
+                    .and_then(|base| base.join(location))
+                    .map_err(|e| RepriseError::InvalidArgument(e.to_string()))?
+                    .to_string();
+                self.validate_external_url(&destination, "Redirect")?;
+                continue;
+            }
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                return Err(RepriseError::api(
+                    status,
+                    response.text().unwrap_or_default(),
+                ));
+            }
+            return Ok(response);
+        }
+        unreachable!()
     }
 
     /// Make a GET request to the Bitrise API
     fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let url = format!("{}{path}", self.base_url);
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", &self.token)
-            .send()?;
+        self.get_with_timeout(path, self.options.timeout)
+    }
 
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().unwrap_or_default();
-            return Err(RepriseError::api(status.as_u16(), message));
-        }
+    fn get_with_timeout<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        timeout: u64,
+    ) -> Result<T> {
+        let url = format!("{}{path}", self.base_url);
+        let response = self.send_get(&url, true, timeout)?;
 
         let body = response.text()?;
         serde_json::from_str(&body).map_err(RepriseError::Json)
@@ -102,31 +240,13 @@ impl BitriseClient {
     /// Make a GET request and return raw text
     fn get_text(&self, path: &str) -> Result<String> {
         let url = format!("{}{path}", self.base_url);
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", &self.token)
-            .send()?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().unwrap_or_default();
-            return Err(RepriseError::api(status.as_u16(), message));
-        }
-
+        let response = self.send_get(&url, true, self.options.timeout)?;
         Ok(response.text()?)
     }
 
     /// Fetch raw content from a URL (for log files)
     fn get_raw(&self, url: &str) -> Result<String> {
-        let response = self.client.get(url).send()?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().unwrap_or_default();
-            return Err(RepriseError::api(status.as_u16(), message));
-        }
-
+        let response = self.send_get(url, false, self.options.timeout)?;
         Ok(response.text()?)
     }
 
@@ -160,7 +280,18 @@ impl BitriseClient {
 
     /// Get the current authenticated user
     pub fn get_me(&self) -> Result<UserResponse> {
-        self.get("/me")
+        let mut cache = self
+            .me_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, value)) = cache.as_ref() {
+            if at.elapsed() < Duration::from_secs(60) {
+                return Ok(value.clone());
+            }
+        }
+        let value: UserResponse = self.get("/me")?;
+        *cache = Some((Instant::now(), value.clone()));
+        Ok(value)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -239,6 +370,115 @@ impl BitriseClient {
         self.get(&format!("/apps/{app_slug}/builds?{query}"))
     }
 
+    /// Walk only the documented next cursor; never follow an API-supplied URL.
+    pub fn search_builds<F>(
+        &self,
+        app: &str,
+        status: Option<i32>,
+        branch: Option<&str>,
+        workflow: Option<&str>,
+        wanted: u32,
+        matches: F,
+    ) -> Result<BuildSearch>
+    where
+        F: Fn(&Build) -> bool,
+    {
+        let mut data = Vec::new();
+        let mut scanned = 0;
+        let mut next: Option<String> = None;
+        let mut seen = HashSet::new();
+        let mut capped = false;
+        while scanned < self.options.search_limit && data.len() < wanted as usize {
+            let remaining = self.options.search_limit - scanned;
+            let limit = if next.is_none() && wanted <= 25 {
+                25.min(remaining)
+            } else {
+                50.min(remaining)
+            };
+            let mut params = vec![("limit", limit.to_string())];
+            if let Some(value) = status {
+                params.push(("status", value.to_string()));
+            }
+            if let Some(value) = branch {
+                params.push(("branch", value.to_string()));
+            }
+            if let Some(value) = workflow {
+                params.push(("workflow", value.to_string()));
+            }
+            if let Some(value) = next.as_ref() {
+                params.push(("next", value.clone()));
+            }
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(params)
+                .finish();
+            let response: BuildListResponse = self.get(&format!("/apps/{app}/builds?{query}"))?;
+            let page_count = response.data.len();
+            for build in response.data.into_iter().take(remaining as usize) {
+                scanned += 1;
+                if matches(&build) {
+                    data.push(build);
+                    if data.len() >= wanted as usize {
+                        break;
+                    }
+                }
+            }
+            next = response.paging.next.filter(|value| !value.is_empty());
+            if data.len() >= wanted as usize {
+                break;
+            }
+            if scanned >= self.options.search_limit
+                && (next.is_some() || page_count > remaining as usize)
+            {
+                capped = true;
+            }
+            if page_count == 0 || next.is_none() {
+                break;
+            }
+            if next
+                .as_ref()
+                .is_some_and(|cursor| !seen.insert(cursor.clone()))
+            {
+                return Err(RepriseError::InvalidArgument(
+                    "Build pagination repeated a cursor; search stopped".into(),
+                ));
+            }
+            if scanned >= self.options.search_limit {
+                capped = true;
+            }
+        }
+        Ok(BuildSearch {
+            data,
+            metadata: SearchMetadata { scanned, capped },
+        })
+    }
+
+    /// Per-client timing history, refreshed after sixty seconds.
+    pub fn timing_history(&self, app: &str) -> Result<Vec<Build>> {
+        let mut cache = self
+            .history_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, builds)) = cache.get(app) {
+            if at.elapsed() < Duration::from_secs(60) {
+                return Ok(builds.clone());
+            }
+        }
+        let builds = self.list_builds(app, None, None, None, 50)?.data;
+        cache.insert(app.to_string(), (Instant::now(), builds.clone()));
+        Ok(builds)
+    }
+
+    pub fn refresh_caches(&self) {
+        *self
+            .me_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        self.history_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
     /// Get a specific build
     pub fn get_build(&self, app_slug: &str, build_slug: &str) -> Result<BuildResponse> {
         self.get(&format!("/apps/{app_slug}/builds/{build_slug}"))
@@ -258,6 +498,15 @@ impl BitriseClient {
         let parsed_url = Url::parse(url).map_err(|_| {
             RepriseError::InvalidArgument(format!("Invalid {} URL: {}", purpose, url))
         })?;
+
+        if parsed_url.scheme() != "https"
+            || !parsed_url.username().is_empty()
+            || parsed_url.password().is_some()
+        {
+            return Err(RepriseError::InvalidArgument(format!(
+                "{purpose} URL must use HTTPS without user information"
+            )));
+        }
 
         let host = parsed_url
             .host_str()
@@ -339,17 +588,115 @@ impl BitriseClient {
         // Validate URL is from allowed hosts (SSRF protection)
         self.validate_external_url(url, "Artifact")?;
 
-        let response = self.client.get(url).send()?;
+        self.download_to_path(url, path)
+    }
 
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().unwrap_or_default();
-            return Err(RepriseError::api(status.as_u16(), message));
+    fn download_to_path(&self, url: &str, path: &std::path::Path) -> Result<()> {
+        let response = self.send_get(url, false, self.options.download_timeout)?;
+        self.persist_stream(response, path, true)
+    }
+
+    fn persist_stream<R: Read>(
+        &self,
+        source: R,
+        path: &std::path::Path,
+        progress: bool,
+    ) -> Result<()> {
+        self.persist_stream_checked(source, path, progress, false)
+    }
+
+    fn persist_stream_checked<R: Read>(
+        &self,
+        mut source: R,
+        path: &std::path::Path,
+        progress: bool,
+        require_log_content: bool,
+    ) -> Result<()> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        let mut buffer = [0u8; 64 * 1024];
+        let mut transferred = 0u64;
+        let mut last_progress = Instant::now();
+        loop {
+            let count = source.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            temporary.write_all(&buffer[..count])?;
+            transferred += count as u64;
+            if progress
+                && !self.options.quiet
+                && std::io::stderr().is_terminal()
+                && last_progress.elapsed() >= Duration::from_secs(1)
+            {
+                eprint!("\rDownloaded {} bytes", transferred);
+                last_progress = Instant::now();
+            }
         }
-
-        let bytes = response.bytes()?;
-        std::fs::write(path, &bytes)?;
+        if require_log_content && transferred == 0 {
+            return Err(RepriseError::LogNotAvailable(
+                "Log content is empty or not yet available.".into(),
+            ));
+        }
+        temporary.as_file_mut().sync_all()?;
+        temporary
+            .persist(path)
+            .map_err(|e| RepriseError::Io(e.error))?;
+        if progress && !self.options.quiet && std::io::stderr().is_terminal() {
+            eprintln!("\rDownloaded {} bytes", transferred);
+        }
         Ok(())
+    }
+
+    fn save_raw_log(&self, url: &str, path: &std::path::Path) -> Result<()> {
+        let raw = self.send_get(url, false, self.options.download_timeout)?;
+        self.persist_stream_checked(raw, path, false, true)
+    }
+
+    /// Atomically save complete log content with the configured transfer timeout.
+    pub fn save_log(&self, app: &str, build: &str, path: &std::path::Path) -> Result<()> {
+        let response: LogResponse = self.get_with_timeout(
+            &format!("/apps/{app}/builds/{build}/log"),
+            self.options.download_timeout,
+        )?;
+        if let Some(url) = response.expiring_raw_log_url {
+            self.validate_external_url(&url, "Log")?;
+            self.save_raw_log(&url, path)
+        } else {
+            let source = ChunkReader {
+                chunks: response.log_chunks.into_iter(),
+                current: std::io::Cursor::new(String::new()),
+            };
+            self.persist_stream_checked(source, path, false, true)
+        }
+    }
+
+    /// Save complete log content, then retain only the requested tail.
+    /// Chunk-only API responses remain supported without guessing incremental endpoints.
+    pub fn save_log_tail(
+        &self,
+        app: &str,
+        build: &str,
+        path: &std::path::Path,
+        tail: usize,
+    ) -> Result<String> {
+        self.save_log(app, build, path)?;
+        let file = std::fs::File::open(path)?;
+        let mut lines = std::collections::VecDeque::new();
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line?;
+            if tail > 0 {
+                if lines.len() == tail {
+                    lines.pop_front();
+                }
+                lines.push_back(line);
+            }
+        }
+        Ok(lines.into_iter().collect::<Vec<_>>().join("\n"))
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1125,6 +1472,7 @@ mod tests {
             .mock("GET", "/me")
             .with_status(500)
             .with_body(r#"{"message": "Internal server error"}"#)
+            .expect(3)
             .create();
 
         let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
@@ -1143,6 +1491,7 @@ mod tests {
             .mock("GET", "/apps?limit=10")
             .with_status(429)
             .with_body(r#"{"message": "Rate limit exceeded"}"#)
+            .expect(3)
             .create();
 
         let client = BitriseClient::with_base_url("test-token", server.url()).unwrap();
@@ -1150,5 +1499,447 @@ mod tests {
 
         mock.assert();
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    use mockito::{Matcher, Server};
+
+    fn build(slug: &str, pr: i64) -> serde_json::Value {
+        serde_json::json!({"slug":slug,"triggered_at":"2026-01-01T00:00:00Z","status":1,"status_text":"success","branch":"main","build_number":1,"triggered_workflow":"primary","pull_request_id":pr})
+    }
+    fn page(builds: Vec<serde_json::Value>, next: Option<&str>) -> String {
+        serde_json::json!({"data":builds,"paging":{"total_item_count":100,"page_item_limit":50,"next":next}}).to_string()
+    }
+    #[test]
+    fn filtered_search_walks_second_page_and_encodes_cursor() {
+        let mut server = Server::new();
+        let first = server
+            .mock("GET", "/apps/a/builds?limit=25")
+            .with_body(page(vec![build("old", 1)], Some("cursor +/&")))
+            .expect(1)
+            .create();
+        let second = server
+            .mock("GET", "/apps/a/builds?limit=50&next=cursor+%2B%2F%26")
+            .with_body(page(vec![build("match", 42)], None))
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let result = client
+            .search_builds("a", None, None, None, 1, |b| b.pull_request_id == Some(42))
+            .unwrap();
+        assert_eq!(result.data[0].slug, "match");
+        assert_eq!(result.metadata.scanned, 2);
+        assert!(!result.metadata.capped);
+        first.assert();
+        second.assert();
+    }
+    #[test]
+    fn capped_latest_search_reports_incomplete_not_found() {
+        let mut server = Server::new();
+        let request = server
+            .mock("GET", "/apps/a/builds?limit=2")
+            .with_body(page(vec![build("one", 1), build("two", 1)], Some("next")))
+            .expect(1)
+            .create();
+        let mut client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        client.options.search_limit = 2;
+        let error = crate::cli::commands::common::resolve_latest_build(
+            &client,
+            "a",
+            None,
+            None,
+            None,
+            Some(42),
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("capped"));
+        request.assert();
+    }
+    #[test]
+    fn oversized_last_page_still_marks_search_capped() {
+        let mut server = Server::new();
+        let request = server
+            .mock("GET", "/apps/a/builds?limit=1")
+            .with_body(page(vec![build("one", 1), build("two", 42)], None))
+            .expect(1)
+            .create();
+        let mut client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        client.options.search_limit = 1;
+        let result = client
+            .search_builds("a", None, None, None, 1, |b| b.pull_request_id == Some(42))
+            .unwrap();
+        assert!(result.data.is_empty());
+        assert!(result.metadata.capped);
+        assert_eq!(result.metadata.scanned, 1);
+        request.assert();
+    }
+
+    #[test]
+    fn pagination_cycle_stops_after_one_repeated_cursor() {
+        let mut server = Server::new();
+        let first = server
+            .mock("GET", "/apps/a/builds?limit=25")
+            .with_body(page(vec![build("one", 1)], Some("same")))
+            .expect(1)
+            .create();
+        let second = server
+            .mock("GET", "/apps/a/builds?limit=50&next=same")
+            .with_body(page(vec![build("two", 1)], Some("same")))
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        assert!(client
+            .search_builds("a", None, None, None, 1, |_| false)
+            .unwrap_err()
+            .to_string()
+            .contains("repeated"));
+        first.assert();
+        second.assert();
+    }
+    #[test]
+    fn performance_cached_identity_and_history_request_counts() {
+        let mut server = Server::new();
+        let identity = server
+            .mock("GET", "/me")
+            .with_body(r#"{"data":{"username":"tester","email":"a@b.c","slug":"user"}}"#)
+            .expect(1)
+            .create();
+        let history = server
+            .mock("GET", "/apps/a/builds?limit=50")
+            .with_body(page(vec![build("one", 1)], None))
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let start = Instant::now();
+        for _ in 0..100 {
+            client.get_me().unwrap();
+            client.timing_history("a").unwrap();
+        }
+        eprintln!(
+            "performance_cached_identity_and_history: 100 refreshes, 2 HTTP requests, {:?}",
+            start.elapsed()
+        );
+        identity.assert();
+        history.assert();
+    }
+    #[test]
+    fn caches_expire_and_explicit_refresh_refetches() {
+        let mut server = Server::new();
+        let identity = server
+            .mock("GET", "/me")
+            .with_body(r#"{"data":{"username":"tester","email":"a@b.c","slug":"user"}}"#)
+            .expect(3)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        client.get_me().unwrap();
+        client.me_cache.lock().unwrap().as_mut().unwrap().0 =
+            Instant::now() - Duration::from_secs(61);
+        client.get_me().unwrap();
+        client.refresh_caches();
+        client.get_me().unwrap();
+        identity.assert();
+    }
+    #[test]
+    fn get_retries_500_but_never_401_or_post() {
+        let mut server = Server::new();
+        let transient = server
+            .mock("GET", "/apps?limit=1")
+            .with_status(500)
+            .expect(3)
+            .create();
+        let unauthorized = server
+            .mock("GET", "/apps?limit=2")
+            .with_status(401)
+            .expect(1)
+            .create();
+        let mutation = server
+            .mock("POST", "/apps/a/builds/b/abort")
+            .with_status(500)
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        assert!(client.list_apps(1).is_err());
+        assert!(client.list_apps(2).is_err());
+        assert!(client.abort_build("a", "b", None).is_err());
+        transient.assert();
+        unauthorized.assert();
+        mutation.assert();
+    }
+    #[test]
+    fn retry_after_zero_retries_and_excessive_wait_returns_error() {
+        let mut server = Server::new();
+        let retry = server
+            .mock("GET", "/apps?limit=1")
+            .with_status(429)
+            .with_header("retry-after", "0")
+            .expect(3)
+            .create();
+        let excessive = server
+            .mock("GET", "/apps?limit=2")
+            .with_status(429)
+            .with_header("retry-after", "3600")
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        assert!(client.list_apps(1).is_err());
+        assert!(client.list_apps(2).is_err());
+        retry.assert();
+        excessive.assert();
+        let date = reqwest::header::HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT");
+        assert_eq!(retry_delay(Some(&date), 0), Some(Duration::ZERO));
+    }
+    #[test]
+    fn failed_stream_preserves_destination_and_removes_temp_file() {
+        struct Broken(bool);
+        impl Read for Broken {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    Err(std::io::Error::other("transfer interrupted"))
+                } else {
+                    self.0 = true;
+                    bytes[..3].copy_from_slice(b"new");
+                    Ok(3)
+                }
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("artifact");
+        std::fs::write(&destination, "existing").unwrap();
+        let client = BitriseClient::with_token("token").unwrap();
+        assert!(client
+            .persist_stream(Broken(false), &destination, false)
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "existing");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        client
+            .persist_stream(std::io::Cursor::new(b"complete"), &destination, false)
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "complete");
+    }
+    #[test]
+    fn saved_chunk_log_retains_full_log_with_tail_output() {
+        let mut server = Server::new();
+        let request = server.mock("GET", "/apps/a/builds/b/log").match_query(Matcher::Any).with_body(r#"{"expiring_raw_log_url":null,"is_archived":false,"log_chunks":[{"chunk":"one\ntwo\n","position":0},{"chunk":"three\n","position":8}]}"#).create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("log");
+        assert_eq!(
+            client.save_log_tail("a", "b", &path, 2).unwrap(),
+            "two\nthree"
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "one\ntwo\nthree\n");
+        request.assert();
+    }
+}
+
+#[cfg(test)]
+mod transfer_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn truncated_http_body_preserves_destination_and_cleans_temp() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            socket.read(&mut request).unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial",
+                )
+                .unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("artifact");
+        std::fs::write(&path, "previous").unwrap();
+        let client = BitriseClient::with_token("token").unwrap();
+        assert!(client
+            .download_to_path(&format!("http://{address}/artifact"), &path)
+            .is_err());
+        worker.join().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn get_attempt_timeout_is_bounded_and_retried() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut sockets = Vec::new();
+            for _ in 0..2 {
+                sockets.push(listener.accept().unwrap().0);
+            }
+            std::thread::sleep(Duration::from_millis(1200));
+        });
+        let mut client =
+            BitriseClient::with_base_url("token", format!("http://{address}")).unwrap();
+        client.options.timeout = 1;
+        client.options.retries = 1;
+        let start = Instant::now();
+        let error = client.list_apps(1).unwrap_err();
+        assert!(matches!(error, RepriseError::Http(ref error) if error.is_timeout()));
+        assert!(start.elapsed() >= Duration::from_secs(2));
+        assert!(start.elapsed() < Duration::from_secs(5));
+        worker.join().unwrap();
+    }
+    #[test]
+    fn authenticated_redirect_is_never_followed() {
+        let mut source = mockito::Server::new();
+        let mut target = mockito::Server::new();
+        let redirect = source
+            .mock("GET", "/me")
+            .with_status(302)
+            .with_header("location", &format!("{}/me", target.url()))
+            .expect(1)
+            .create();
+        let target_request = target.mock("GET", "/me").expect(0).create();
+        let client = BitriseClient::with_base_url("secret", source.url()).unwrap();
+        assert!(client.get_me().is_err());
+        redirect.assert();
+        target_request.assert();
+    }
+    #[test]
+    fn external_redirect_to_untrusted_host_is_rejected() {
+        let mut source = mockito::Server::new();
+        let mut target = mockito::Server::new();
+        let redirect = source
+            .mock("GET", "/file")
+            .with_status(302)
+            .with_header("location", &format!("{}/file", target.url()))
+            .expect(1)
+            .create();
+        let target_request = target.mock("GET", "/file").expect(0).create();
+        let client = BitriseClient::with_base_url("secret", source.url()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        assert!(client
+            .download_to_path(
+                &format!("{}/file", source.url()),
+                &directory.path().join("file")
+            )
+            .is_err());
+        redirect.assert();
+        target_request.assert();
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+    #[test]
+    fn performance_many_chunks_are_streamed_iteratively() {
+        let chunks: Vec<LogChunk> = (0..100_000)
+            .map(|position| LogChunk {
+                chunk: "chunk\n".into(),
+                position,
+            })
+            .collect();
+        let mut source = ChunkReader {
+            chunks: chunks.into_iter(),
+            current: std::io::Cursor::new(String::new()),
+        };
+        let start = Instant::now();
+        let bytes = std::io::copy(&mut source, &mut std::io::sink()).unwrap();
+        assert_eq!(bytes, 600_000);
+        eprintln!(
+            "performance_many_chunks: 100000 chunks, 600000 streamed bytes, {:?}",
+            start.elapsed()
+        );
+    }
+    #[test]
+    fn timing_history_cache_is_scoped_by_app_and_expires() {
+        let mut server = mockito::Server::new();
+        let body =
+            r#"{"data":[],"paging":{"total_item_count":0,"page_item_limit":50,"next":null}}"#;
+        let a = server
+            .mock("GET", "/apps/a/builds?limit=50")
+            .with_body(body)
+            .expect(2)
+            .create();
+        let b = server
+            .mock("GET", "/apps/b/builds?limit=50")
+            .with_body(body)
+            .expect(1)
+            .create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        client.timing_history("a").unwrap();
+        client.timing_history("b").unwrap();
+        client.timing_history("a").unwrap();
+        client.history_cache.lock().unwrap().get_mut("a").unwrap().0 =
+            Instant::now() - Duration::from_secs(61);
+        client.timing_history("a").unwrap();
+        client.timing_history("b").unwrap();
+        a.assert();
+        b.assert();
+    }
+}
+
+#[cfg(test)]
+mod saved_log_tests {
+    use super::*;
+    #[test]
+    fn empty_chunk_save_errors_preserving_existing_file_even_tail_zero() {
+        let mut server = mockito::Server::new();
+        let request = server.mock("GET", "/apps/a/builds/b/log")
+            .with_body(r#"{"expiring_raw_log_url":null,"is_archived":false,"log_chunks":[{"chunk":"","position":0}]}"#).expect(1).create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("log");
+        std::fs::write(&path, "previous log").unwrap();
+        assert!(matches!(
+            client.save_log_tail("a", "b", &path, 0),
+            Err(RepriseError::LogNotAvailable(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous log");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        request.assert();
+    }
+    #[test]
+    fn empty_raw_save_errors_preserving_existing_file() {
+        let mut server = mockito::Server::new();
+        let request = server.mock("GET", "/raw").with_body("").expect(1).create();
+        let client = BitriseClient::with_base_url("token", server.url()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("log");
+        std::fs::write(&path, "previous log").unwrap();
+        assert!(matches!(
+            client.save_raw_log(&format!("{}/raw", server.url()), &path),
+            Err(RepriseError::LogNotAvailable(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous log");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        request.assert();
+    }
+    #[test]
+    fn saved_raw_transfer_uses_download_timeout() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            socket.read(&mut request).unwrap();
+            std::thread::sleep(Duration::from_millis(1200));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nlog\n",
+                )
+                .unwrap();
+        });
+        let mut client = BitriseClient::with_token("token").unwrap();
+        client.options.timeout = 1;
+        client.options.download_timeout = 3;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("log");
+        client
+            .save_raw_log(&format!("http://{address}/raw"), &path)
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "log\n");
+        worker.join().unwrap();
     }
 }

@@ -47,27 +47,36 @@ pub fn log(
         );
     }
 
-    // Fetch the full log
-    let log_content = client.get_full_log(app_slug, &build_slug)?;
-
-    if log_content.is_empty() {
-        return Err(RepriseError::LogNotAvailable(
-            "Log content is empty or not yet available.".to_string(),
-        ));
-    }
-
-    // Apply --tail if specified
-    let output = if let Some(tail_lines) = args.tail {
-        let lines: Vec<&str> = log_content.lines().collect();
-        let start = lines.len().saturating_sub(tail_lines);
-        lines[start..].join("\n")
+    let output = if let Some(path) = &args.save {
+        let path = std::path::Path::new(path);
+        if let Some(tail) = args.tail {
+            client.save_log_tail(app_slug, &build_slug, path, tail)?
+        } else {
+            client.save_log(app_slug, &build_slug, path)?;
+            fs::read_to_string(path)?
+        }
     } else {
-        log_content.clone()
+        let content = client.get_full_log(app_slug, &build_slug)?;
+        if content.is_empty() {
+            return Err(RepriseError::LogNotAvailable(
+                "Log content is empty or not yet available.".into(),
+            ));
+        }
+        if let Some(tail) = args.tail {
+            content
+                .lines()
+                .rev()
+                .take(tail)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            content
+        }
     };
-
-    // Save to file if --save specified
-    if let Some(ref path) = args.save {
-        fs::write(path, &log_content)?;
+    if let Some(path) = &args.save {
         if format == OutputFormat::Pretty {
             eprintln!("Log saved to: {}", path);
         }
@@ -133,26 +142,22 @@ fn follow_log(
             }
         };
 
-        // Get new lines since last fetch (use get() to prevent panic if log shrinks)
-        let lines: Vec<&str> = log_content.lines().collect();
-        let new_lines = lines.get(last_line_count..).unwrap_or_default();
-
-        // Print new lines
-        if !new_lines.is_empty() {
-            for line in new_lines {
-                match format {
-                    OutputFormat::Pretty => {
-                        writeln!(stdout, "{}", highlight_log_line(line))?;
-                    }
-                    OutputFormat::Json => {
-                        let json = serde_json::json!({ "line": line });
-                        writeln!(stdout, "{}", serde_json::to_string(&json)?)?;
-                    }
-                }
-            }
-            stdout.flush()?;
-            last_line_count = lines.len();
+        let line_count = log_content.lines().count();
+        if line_count < last_line_count {
+            last_line_count = 0;
         }
+        for line in log_content.lines().skip(last_line_count) {
+            match format {
+                OutputFormat::Pretty => writeln!(stdout, "{}", highlight_log_line(line))?,
+                OutputFormat::Json => writeln!(
+                    stdout,
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({ "line": line }))?
+                )?,
+            }
+        }
+        stdout.flush()?;
+        last_line_count = line_count;
 
         // Check if build is done
         if !build.data.is_running() {

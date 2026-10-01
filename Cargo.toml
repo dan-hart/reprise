@@ -1,9 +1,13 @@
 [package]
 name = "reprise"
-version = "0.1.11"
+version = "0.2.0"
 edition = "2021"
 description = "A fast, feature-rich CLI for viewing build details from Bitrise"
 license = "GPL-3.0-only"
+repository = "https://github.com/dan-hart/reprise"
+homepage = "https://github.com/dan-hart/reprise"
+documentation = "https://github.com/dan-hart/reprise/blob/main/docs/cli-reference.md"
+readme = "README.md"
 keywords = ["bitrise", "ci", "builds", "cli", "devops"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -16,6 +20,7 @@ clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+serde_yaml_ng = "0.10"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["blocking", "json"] }
@@ -47,10 +52,12 @@ terminal_size = "0.4"
 # Secure password input (for API token)
 rpassword = "7"
 
+tempfile = "3"
+
 [dev-dependencies]
+shell-words = "1"
 assert_cmd = "2"
 predicates = "3"
-tempfile = "3"
 mockito = "1"
 
 [profile.release]

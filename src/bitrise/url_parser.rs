@@ -81,14 +81,13 @@ impl BitriseUrl {
 /// - `https://app.bitrise.io/build/{build-slug}`
 /// - `https://app.bitrise.io/app/{app-slug}/pipelines/{pipeline-id}`
 pub fn parse_bitrise_url(input: &str) -> Result<BitriseUrl> {
-    let url = Url::parse(input).map_err(|_| {
-        RepriseError::InvalidArgument(format!("Invalid URL: {}", input))
-    })?;
+    let url = Url::parse(input)
+        .map_err(|_| RepriseError::InvalidArgument(format!("Invalid URL: {}", input)))?;
 
     // Validate host
-    let host = url.host_str().ok_or_else(|| {
-        RepriseError::InvalidArgument(format!("URL has no host: {}", input))
-    })?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| RepriseError::InvalidArgument(format!("URL has no host: {}", input)))?;
 
     if host != "app.bitrise.io" {
         return Err(RepriseError::InvalidArgument(format!(
@@ -98,10 +97,7 @@ pub fn parse_bitrise_url(input: &str) -> Result<BitriseUrl> {
     }
 
     // Parse path segments
-    let segments: Vec<&str> = url
-        .path_segments()
-        .map(|s| s.collect())
-        .unwrap_or_default();
+    let segments: Vec<&str> = url.path_segments().map(|s| s.collect()).unwrap_or_default();
 
     match segments.as_slice() {
         // /app/{slug}
@@ -133,7 +129,12 @@ mod tests {
     #[test]
     fn test_parse_app_url() {
         let url = parse_bitrise_url("https://app.bitrise.io/app/abc123").unwrap();
-        assert_eq!(url, BitriseUrl::App { slug: "abc123".to_string() });
+        assert_eq!(
+            url,
+            BitriseUrl::App {
+                slug: "abc123".to_string()
+            }
+        );
         assert_eq!(url.app_slug(), Some("abc123"));
         assert_eq!(url.build_slug(), None);
         assert_eq!(url.description(), "app");
@@ -142,7 +143,12 @@ mod tests {
     #[test]
     fn test_parse_build_url() {
         let url = parse_bitrise_url("https://app.bitrise.io/build/xyz789").unwrap();
-        assert_eq!(url, BitriseUrl::Build { slug: "xyz789".to_string() });
+        assert_eq!(
+            url,
+            BitriseUrl::Build {
+                slug: "xyz789".to_string()
+            }
+        );
         assert_eq!(url.app_slug(), None);
         assert_eq!(url.build_slug(), Some("xyz789"));
         assert_eq!(url.description(), "build");
@@ -151,10 +157,13 @@ mod tests {
     #[test]
     fn test_parse_pipeline_url() {
         let url = parse_bitrise_url("https://app.bitrise.io/app/abc123/pipelines/def456").unwrap();
-        assert_eq!(url, BitriseUrl::Pipeline {
-            app_slug: "abc123".to_string(),
-            pipeline_id: "def456".to_string(),
-        });
+        assert_eq!(
+            url,
+            BitriseUrl::Pipeline {
+                app_slug: "abc123".to_string(),
+                pipeline_id: "def456".to_string(),
+            }
+        );
         assert_eq!(url.app_slug(), Some("abc123"));
         assert_eq!(url.pipeline_id(), Some("def456"));
         assert_eq!(url.description(), "pipeline");
@@ -166,17 +175,23 @@ mod tests {
         let url = parse_bitrise_url(
             "https://app.bitrise.io/app/36f58731-9f78-4142-9479-866acc94e15a/pipelines/d7790456-f02a-4267-bcd5-09f394e2cd29"
         ).unwrap();
-        assert_eq!(url, BitriseUrl::Pipeline {
-            app_slug: "36f58731-9f78-4142-9479-866acc94e15a".to_string(),
-            pipeline_id: "d7790456-f02a-4267-bcd5-09f394e2cd29".to_string(),
-        });
+        assert_eq!(
+            url,
+            BitriseUrl::Pipeline {
+                app_slug: "36f58731-9f78-4142-9479-866acc94e15a".to_string(),
+                pipeline_id: "d7790456-f02a-4267-bcd5-09f394e2cd29".to_string(),
+            }
+        );
     }
 
     #[test]
     fn test_invalid_host() {
         let result = parse_bitrise_url("https://example.com/app/abc123");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Not a Bitrise URL"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Not a Bitrise URL"));
     }
 
     #[test]
@@ -200,16 +215,23 @@ mod tests {
 
     #[test]
     fn test_to_url() {
-        let app = BitriseUrl::App { slug: "abc".to_string() };
+        let app = BitriseUrl::App {
+            slug: "abc".to_string(),
+        };
         assert_eq!(app.to_url(), "https://app.bitrise.io/app/abc");
 
-        let build = BitriseUrl::Build { slug: "xyz".to_string() };
+        let build = BitriseUrl::Build {
+            slug: "xyz".to_string(),
+        };
         assert_eq!(build.to_url(), "https://app.bitrise.io/build/xyz");
 
         let pipeline = BitriseUrl::Pipeline {
             app_slug: "abc".to_string(),
             pipeline_id: "123".to_string(),
         };
-        assert_eq!(pipeline.to_url(), "https://app.bitrise.io/app/abc/pipelines/123");
+        assert_eq!(
+            pipeline.to_url(),
+            "https://app.bitrise.io/app/abc/pipelines/123"
+        );
     }
 }

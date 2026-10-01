@@ -175,29 +175,17 @@ pub fn resolve_latest_build(
         branch.map(str::to_string)
     };
 
-    let response = client.list_builds(
+    let response = client.search_builds(
         app_slug,
         status.map(BuildStatusFilter::to_api_code),
         branch.as_deref(),
         workflow,
-        latest_build_page_size(pr),
+        1,
+        |build| pr.is_none_or(|pr| build.pull_request_id == Some(pr)),
     )?;
-
-    response
-        .data
-        .into_iter()
-        .find(|build| pr.is_none_or(|pr_num| build.pull_request_id == Some(pr_num)))
-        .ok_or_else(|| {
-            RepriseError::BuildNotFound("No build matched the latest filters".to_string())
-        })
-}
-
-fn latest_build_page_size(pr: Option<i64>) -> u32 {
-    if pr.is_some() {
-        50
-    } else {
-        25
-    }
+    response.data.into_iter().next().ok_or_else(|| RepriseError::BuildNotFound(
+        if response.metadata.capped { format!("No build matched latest filters in capped search ({} builds); raise --search-limit", response.metadata.scanned) }
+        else { "No build matched the latest filters".into() }))
 }
 
 fn ensure_interactive_selection_allowed(format: OutputFormat, resource: &str) -> Result<()> {
@@ -599,16 +587,6 @@ mod tests {
     fn test_matches_user_bitrise_match_takes_precedence() {
         // If Bitrise username matches, we don't need GitHub
         assert!(matches_user("manual-bitrise-user", "bitrise-user", None));
-    }
-
-    #[test]
-    fn test_latest_build_page_size_defaults_to_recent_window() {
-        assert_eq!(latest_build_page_size(None), 25);
-    }
-
-    #[test]
-    fn test_latest_build_page_size_expands_for_pr_filter() {
-        assert_eq!(latest_build_page_size(Some(1234)), 50);
     }
 
     #[test]

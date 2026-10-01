@@ -10,6 +10,12 @@ use crate::error::{RepriseError, Result};
 /// Main configuration structure
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(skip)]
+    pub network: crate::bitrise::NetworkOptions,
+    #[serde(skip)]
+    pub project: Option<super::project::ProjectConfig>,
+    #[serde(skip)]
+    pub selected_profile: Option<String>,
     /// API configuration
     #[serde(default)]
     pub api: ApiConfig,
@@ -66,6 +72,8 @@ pub struct DefaultsConfig {
     pub app_slug: Option<String>,
     /// Default app name (for display)
     pub app_name: Option<String>,
+    /// Default trigger workflow
+    pub workflow: Option<String>,
 }
 
 /// Output formatting preferences
@@ -86,6 +94,7 @@ pub enum SavedViewKind {
 
 /// Saved view definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedView {
     pub kind: SavedViewKind,
     pub app: Option<String>,
@@ -114,13 +123,17 @@ impl Default for OutputConfig {
 
 impl Config {
     fn current_profile(&self) -> Option<&ProfileConfig> {
-        self.active_profile
+        self.selected_profile
             .as_ref()
+            .or(self.active_profile.as_ref())
             .and_then(|name| self.profiles.get(name))
     }
 
     fn current_profile_mut_or_create(&mut self) -> Option<&mut ProfileConfig> {
-        let name = self.active_profile.clone()?;
+        let name = self
+            .selected_profile
+            .clone()
+            .or_else(|| self.active_profile.clone())?;
         Some(self.profiles.entry(name).or_default())
     }
 
@@ -140,6 +153,42 @@ impl Config {
         self.current_profile()
             .map(|profile| &profile.output)
             .unwrap_or(&self.output)
+    }
+
+    /// Apply temporary command context without modifying saved user settings.
+    pub fn apply_context(&mut self, cwd: &std::path::Path, profile: Option<&str>) -> Result<()> {
+        let project = super::project::discover(cwd)?;
+        let selected = profile.or_else(|| project.as_ref().and_then(|p| p.profile.as_deref()));
+        if let Some(name) = selected.or(self.active_profile.as_deref()) {
+            if !self.profiles.contains_key(name) {
+                return Err(RepriseError::Config(format!(
+                    "Unknown profile '{name}'. Create it with 'reprise config profile {name} --token TOKEN'."
+                )));
+            }
+        }
+        self.selected_profile = selected.map(str::to_string);
+        self.project = project;
+        Ok(())
+    }
+
+    /// Profile management can repair user configuration even when project context is invalid.
+    /// An explicit global selection still directs mutations without persisting active_profile.
+    pub fn apply_profile_edit_context(&mut self, profile: Option<&str>) -> Result<()> {
+        if let Some(name) = profile {
+            if !self.profiles.contains_key(name) {
+                return Err(RepriseError::Config(format!("Unknown profile '{name}'. Create it with 'reprise config profile {name} --token TOKEN'.")));
+            }
+        }
+        self.selected_profile = profile.map(str::to_string);
+        self.project = None;
+        Ok(())
+    }
+
+    pub fn default_workflow(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .and_then(|p| p.workflow.as_deref())
+            .or(self.effective_defaults().workflow.as_deref())
     }
 
     /// Load configuration from the default path
@@ -192,9 +241,11 @@ impl Config {
 
     /// Get the default app slug or return an error with instructions
     pub fn require_default_app(&self) -> Result<&str> {
-        self.effective_defaults()
-            .app_slug
-            .as_deref()
+        self.project
+            .as_ref()
+            .and_then(|p| p.app.as_deref())
+            .or(self.effective_defaults().app_slug.as_deref())
+            .map(|app| self.resolve_alias(app))
             .ok_or(RepriseError::NoDefaultApp)
     }
 
@@ -262,6 +313,9 @@ impl Config {
 
     /// Get the effective default app name, respecting the active profile.
     pub fn default_app_name(&self) -> Option<&str> {
+        if self.project.as_ref().is_some_and(|p| p.app.is_some()) {
+            return None;
+        }
         self.effective_defaults().app_name.as_deref()
     }
 
@@ -309,7 +363,10 @@ impl Config {
 
     /// Get a saved view by name.
     pub fn get_view(&self, name: &str) -> Option<&SavedView> {
-        self.views.get(name)
+        self.project
+            .as_ref()
+            .and_then(|p| p.views.get(name))
+            .or_else(|| self.views.get(name))
     }
 
     /// Remove a saved view.
@@ -319,7 +376,11 @@ impl Config {
 
     /// Return a sorted list of saved view names and definitions.
     pub fn list_views(&self) -> Vec<(&String, &SavedView)> {
-        let mut views: Vec<_> = self.views.iter().collect();
+        let mut merged: HashMap<_, _> = self.views.iter().collect();
+        if let Some(project) = &self.project {
+            merged.extend(project.views.iter());
+        }
+        let mut views: Vec<_> = merged.into_iter().collect();
         views.sort_by_key(|(name, _)| *name);
         views
     }

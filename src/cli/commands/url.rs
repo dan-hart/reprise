@@ -24,27 +24,32 @@ pub fn is_generation_mode(args: &UrlArgs) -> bool {
 pub fn url_generate(args: &UrlArgs, format: OutputFormat) -> Result<String> {
     if let Some(ref build_slug) = args.gen_build {
         return handle_url_generation(
-            BitriseUrl::Build { slug: build_slug.clone() },
+            BitriseUrl::Build {
+                slug: build_slug.clone(),
+            },
             args,
             format,
         );
     }
     if let Some(ref app_slug) = args.gen_app {
         return handle_url_generation(
-            BitriseUrl::App { slug: app_slug.clone() },
+            BitriseUrl::App {
+                slug: app_slug.clone(),
+            },
             args,
             format,
         );
     }
     if let Some(ref pipeline_id) = args.gen_pipeline {
-        let app_slug = args.app_slug_for_pipeline.as_ref()
-            .ok_or_else(|| RepriseError::InvalidArgument(
-                "--app-slug is required when generating pipeline URLs".to_string()
-            ))?;
+        let app_slug = args.app_slug_for_pipeline.as_ref().ok_or_else(|| {
+            RepriseError::InvalidArgument(
+                "--app-slug is required when generating pipeline URLs".to_string(),
+            )
+        })?;
         return handle_url_generation(
             BitriseUrl::Pipeline {
                 app_slug: app_slug.clone(),
-                pipeline_id: pipeline_id.clone()
+                pipeline_id: pipeline_id.clone(),
             },
             args,
             format,
@@ -52,7 +57,7 @@ pub fn url_generate(args: &UrlArgs, format: OutputFormat) -> Result<String> {
     }
 
     Err(RepriseError::InvalidArgument(
-        "url_generate called without generation flags".to_string()
+        "url_generate called without generation flags".to_string(),
     ))
 }
 
@@ -70,10 +75,11 @@ pub fn url(
     }
 
     // Parse the URL (required when not in generation mode)
-    let url_str = args.url.as_ref()
-        .ok_or_else(|| RepriseError::InvalidArgument(
-            "Either a URL or one of --build, --app, --pipeline is required".to_string()
-        ))?;
+    let url_str = args.url.as_ref().ok_or_else(|| {
+        RepriseError::InvalidArgument(
+            "Either a URL or one of --build, --app, --pipeline is required".to_string(),
+        )
+    })?;
     let parsed = parse_bitrise_url(url_str)?;
 
     // Validate flags for URL type
@@ -83,21 +89,22 @@ pub fn url(
     if args.browser {
         open_url_in_browser(&parsed.to_url())?;
         if format == OutputFormat::Pretty {
-            return Ok(format!("{} Opened in browser: {}", "->".cyan(), parsed.to_url()));
+            return Ok(format!(
+                "{} Opened in browser: {}",
+                "->".cyan(),
+                parsed.to_url()
+            ));
         }
     }
 
     // Handle based on URL type
     match parsed {
-        BitriseUrl::Build { slug } => {
-            handle_build_url(client, config, &slug, args, format)
-        }
-        BitriseUrl::App { slug } => {
-            handle_app_url(client, config, &slug, args, format)
-        }
-        BitriseUrl::Pipeline { app_slug, pipeline_id } => {
-            handle_pipeline_url(client, &app_slug, &pipeline_id, args, format)
-        }
+        BitriseUrl::Build { slug } => handle_build_url(client, config, &slug, args, format),
+        BitriseUrl::App { slug } => handle_app_url(client, config, &slug, args, format),
+        BitriseUrl::Pipeline {
+            app_slug,
+            pipeline_id,
+        } => handle_pipeline_url(client, &app_slug, &pipeline_id, args, format),
     }
 }
 
@@ -133,7 +140,10 @@ fn handle_url_generation(
                     "slug": slug,
                     "url": url
                 }),
-                BitriseUrl::Pipeline { app_slug, pipeline_id } => serde_json::json!({
+                BitriseUrl::Pipeline {
+                    app_slug,
+                    pipeline_id,
+                } => serde_json::json!({
                     "type": "pipeline",
                     "app_slug": app_slug,
                     "pipeline_id": pipeline_id,
@@ -195,12 +205,14 @@ fn validate_flags_for_url_type(parsed: &BitriseUrl, args: &UrlArgs) -> Result<()
             }
             if args.logs {
                 return Err(RepriseError::InvalidArgument(
-                    "--logs is only valid for build URLs (pipelines contain multiple workflows)".to_string(),
+                    "--logs is only valid for build URLs (pipelines contain multiple workflows)"
+                        .to_string(),
                 ));
             }
             if args.follow {
                 return Err(RepriseError::InvalidArgument(
-                    "--follow is only valid for build URLs (pipelines contain multiple workflows)".to_string(),
+                    "--follow is only valid for build URLs (pipelines contain multiple workflows)"
+                        .to_string(),
                 ));
             }
             if args.artifacts {
@@ -261,7 +273,14 @@ fn handle_build_url(
 
     // Handle --follow flag: stream live log output
     if args.follow {
-        return follow_build_log(client, &app_slug, build_slug, args.interval, args.notify, format);
+        return follow_build_log(
+            client,
+            &app_slug,
+            build_slug,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     // Handle --artifacts flag: list build artifacts
@@ -271,7 +290,14 @@ fn handle_build_url(
 
     // Handle watch mode
     if args.watch && build.is_running() {
-        return watch_build_with_app(client, &app_slug, build_slug, args.interval, args.notify, format);
+        return watch_build_with_app(
+            client,
+            &app_slug,
+            build_slug,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     // Show build info
@@ -365,10 +391,7 @@ fn follow_build_log(
     .ok();
 
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Following build log (Ctrl+C to stop)...\n",
-            "->".cyan()
-        );
+        eprintln!("{} Following build log (Ctrl+C to stop)...\n", "->".cyan());
     }
 
     loop {
@@ -457,7 +480,10 @@ fn list_build_artifacts(
 
     if response.data.is_empty() {
         return match format {
-            OutputFormat::Pretty => Ok(format!("{} No artifacts found for this build.", "!".yellow())),
+            OutputFormat::Pretty => Ok(format!(
+                "{} No artifacts found for this build.",
+                "!".yellow()
+            )),
             OutputFormat::Json => Ok(serde_json::to_string_pretty(&response.data)?),
         };
     }
@@ -536,10 +562,7 @@ fn watch_build_with_app(
     .ok();
 
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Watching build (Ctrl+C to stop)...\n",
-            "->".cyan()
-        );
+        eprintln!("{} Watching build (Ctrl+C to stop)...\n", "->".cyan());
     }
 
     let mut last_status = -1;
@@ -677,7 +700,14 @@ fn handle_pipeline_url(
 
     // Handle watch mode
     if args.watch && pipeline.is_running() {
-        return watch_pipeline(client, app_slug, pipeline_id, args.interval, args.notify, format);
+        return watch_pipeline(
+            client,
+            app_slug,
+            pipeline_id,
+            args.interval,
+            args.notify,
+            format,
+        );
     }
 
     // Show pipeline info
@@ -714,10 +744,7 @@ fn watch_pipeline(
     .ok();
 
     if format == OutputFormat::Pretty {
-        eprintln!(
-            "{} Watching pipeline (Ctrl+C to stop)...\n",
-            "->".cyan()
-        );
+        eprintln!("{} Watching pipeline (Ctrl+C to stop)...\n", "->".cyan());
     }
 
     let mut last_status = -1;
@@ -825,10 +852,22 @@ fn watch_pipeline(
 /// Send desktop notification when pipeline completes
 fn notify_pipeline_completed(pipeline: &crate::bitrise::Pipeline) {
     let (title, body) = match pipeline.status {
-        1 => ("Pipeline Succeeded", format!("Pipeline {} completed successfully", pipeline.pipeline_id)),
-        2 => ("Pipeline Failed", format!("Pipeline {} failed", pipeline.pipeline_id)),
-        3 => ("Pipeline Aborted", format!("Pipeline {} was aborted", pipeline.pipeline_id)),
-        _ => ("Pipeline Finished", format!("Pipeline {} finished", pipeline.pipeline_id)),
+        1 => (
+            "Pipeline Succeeded",
+            format!("Pipeline {} completed successfully", pipeline.pipeline_id),
+        ),
+        2 => (
+            "Pipeline Failed",
+            format!("Pipeline {} failed", pipeline.pipeline_id),
+        ),
+        3 => (
+            "Pipeline Aborted",
+            format!("Pipeline {} was aborted", pipeline.pipeline_id),
+        ),
+        _ => (
+            "Pipeline Finished",
+            format!("Pipeline {} finished", pipeline.pipeline_id),
+        ),
     };
 
     if let Err(e) = notify_rust::Notification::new()
@@ -996,20 +1035,14 @@ fn retry_build_action(
     match format {
         OutputFormat::Pretty => {
             let mut output = String::new();
-            output.push_str(&format!(
-                "{} Triggered rebuild\n",
-                "✓".green()
-            ));
+            output.push_str(&format!("{} Triggered rebuild\n", "✓".green()));
             output.push_str(&format!(
                 "  Original: #{} ({}, {})\n",
-                build.build_number,
-                build.triggered_workflow,
-                build.branch
+                build.build_number, build.triggered_workflow, build.branch
             ));
             output.push_str(&format!(
                 "  New:      #{} (slug: {})\n",
-                new_build_number,
-                new_build_slug
+                new_build_number, new_build_slug
             ));
             output.push_str(&format!(
                 "\n  URL: https://app.bitrise.io/build/{}",
@@ -1093,14 +1126,12 @@ fn download_artifacts_action(
     }
 
     match format {
-        OutputFormat::Pretty => {
-            Ok(format!(
-                "\n{} Downloaded {} artifact(s) to {}",
-                "✓".green(),
-                downloaded.len(),
-                download_dir.display()
-            ))
-        }
+        OutputFormat::Pretty => Ok(format!(
+            "\n{} Downloaded {} artifact(s) to {}",
+            "✓".green(),
+            downloaded.len(),
+            download_dir.display()
+        )),
         OutputFormat::Json => {
             let json = serde_json::json!({
                 "downloaded": downloaded,
@@ -1119,10 +1150,7 @@ fn sanitize_artifact_filename(name: &str) -> Result<String> {
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| {
-            RepriseError::InvalidArgument(format!(
-                "Cannot extract safe filename from: {}",
-                name
-            ))
+            RepriseError::InvalidArgument(format!("Cannot extract safe filename from: {}", name))
         })?;
 
     if base_name.contains("..") || base_name.contains('/') || base_name.contains('\\') {

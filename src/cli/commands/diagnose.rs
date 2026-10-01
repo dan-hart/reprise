@@ -1,3 +1,4 @@
+use super::log_diagnosis::{self, LogSummary};
 use crate::bitrise::{Artifact, BitriseClient, Build};
 use crate::cli::args::{DiagnoseArgs, OutputFormat};
 use crate::config::Config;
@@ -28,8 +29,16 @@ pub fn diagnose(
         ));
     };
 
-    let log = client.get_full_log(app_slug, &build.slug).ok();
-    let artifacts = client.list_artifacts(app_slug, &build.slug).ok();
+    let log_result = client.get_full_log(app_slug, &build.slug);
+    let log_error = log_result.as_ref().err().map(ToString::to_string);
+    let log = log_result.ok().filter(|log| !log.trim().is_empty());
+    let log_error = log_error.or_else(|| {
+        log.is_none()
+            .then(|| "Log is empty or not yet available".into())
+    });
+    let artifacts_result = client.list_artifacts(app_slug, &build.slug);
+    let artifact_error = artifacts_result.as_ref().err().map(ToString::to_string);
+    let artifacts = artifacts_result.ok();
     let summary = summarize_log(log.as_deref());
 
     match format {
@@ -37,11 +46,15 @@ pub fn diagnose(
             &build,
             summary.as_ref(),
             artifacts.as_ref().map(|r| r.data.as_slice()),
+            log_error.as_deref(),
+            artifact_error.as_deref(),
         )),
         OutputFormat::Json => {
             let json = serde_json::json!({
                 "build": build,
                 "summary": summary,
+                "log_error": log_error,
+                "artifact_error": artifact_error,
                 "artifact_count": artifacts.as_ref().map(|r| r.data.len()),
             });
             Ok(serde_json::to_string_pretty(&json)?)
@@ -49,64 +62,16 @@ pub fn diagnose(
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-struct LogSummary {
-    category: String,
-    first_error: Option<String>,
-    last_error: Option<String>,
-    suggested_next_step: String,
-}
-
 fn summarize_log(log: Option<&str>) -> Option<LogSummary> {
-    let log = log?;
-    let mut error_lines = Vec::new();
-
-    for line in log.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("error")
-            || lower.contains("failed")
-            || lower.contains("fatal")
-            || lower.contains("exception")
-            || lower.contains("panic")
-        {
-            error_lines.push(line.trim().to_string());
-        }
-    }
-
-    let category = if log.contains("test") && log.contains("failed") {
-        "tests"
-    } else if log.contains("Could not resolve") || log.contains("No such file or directory") {
-        "dependencies"
-    } else if log.contains("compile") || log.contains("rustc") {
-        "compile"
-    } else if log.contains("sign") || log.contains("provision") {
-        "signing"
-    } else {
-        "generic"
-    };
-
-    Some(LogSummary {
-        category: category.to_string(),
-        first_error: error_lines.first().cloned(),
-        last_error: error_lines.last().cloned(),
-        suggested_next_step: match category {
-            "tests" => "Open the full log and inspect the first failing test.".to_string(),
-            "dependencies" => {
-                "Check dependency installation and missing file configuration.".to_string()
-            }
-            "compile" => "Inspect compiler output near the first error line.".to_string(),
-            "signing" => {
-                "Verify signing credentials, certificates, and provisioning settings.".to_string()
-            }
-            _ => "Inspect the full log and compare against the last successful build.".to_string(),
-        },
-    })
+    log.map(log_diagnosis::summarize)
 }
 
 fn format_pretty(
     build: &Build,
     summary: Option<&LogSummary>,
     artifacts: Option<&[Artifact]>,
+    log_error: Option<&str>,
+    artifact_error: Option<&str>,
 ) -> String {
     let mut output = String::new();
     output.push_str(&format!("Build diagnosis for #{}\n", build.build_number));
@@ -117,13 +82,31 @@ fn format_pretty(
     output.push_str(&format!("Workflow: {}\n", build.triggered_workflow));
     output.push_str(&format!("Duration: {}\n", build.duration_display()));
 
+    if let Some(error) = log_error {
+        output.push_str(&format!("\nLog unavailable: {error}\n"));
+    }
+    if let Some(error) = artifact_error {
+        output.push_str(&format!("Artifacts unavailable: {error}\n"));
+    }
     if let Some(summary) = summary {
-        output.push_str(&format!("\nLikely category: {}\n", summary.category));
+        output.push_str(&format!(
+            "\nLikely category: {} (signal confidence: {})\n",
+            summary.category, summary.confidence
+        ));
+        if let Some(step) = &summary.failed_step {
+            output.push_str(&format!("Step at failure: {step}\n"));
+        }
         if let Some(first) = &summary.first_error {
             output.push_str(&format!("First error: {}\n", first));
         }
         if let Some(last) = &summary.last_error {
             output.push_str(&format!("Last error: {}\n", last));
+        }
+        if !summary.context.is_empty() {
+            output.push_str("Context (log line numbers):\n");
+            for line in &summary.context {
+                output.push_str(&format!("  {}: {}\n", line.line, line.text));
+            }
         }
         output.push_str(&format!("Next step: {}\n", summary.suggested_next_step));
     }
@@ -154,5 +137,75 @@ mod tests {
         assert_eq!(summary.category, "compile");
         assert!(summary.first_error.is_some());
         assert!(summary.last_error.is_some());
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn successful_summary_and_incidental_design_are_not_failure_evidence() {
+        let result = summarize_log(Some(
+            "Design resources copied\n0 errors, 0 failures\nAll tests passed\nBUILD SUCCEEDED",
+        ))
+        .unwrap();
+        assert_eq!(result.category, "unknown");
+        assert!(result.first_error.is_none());
+    }
+    #[test]
+    fn xcode_signing_error_has_precise_category() {
+        let result = summarize_log(Some("Testing build\nerror: No profiles for 'com.example.app' were found\n** BUILD FAILED **")).unwrap();
+        assert_eq!(result.category, "signing");
+    }
+    #[test]
+    fn swift_compiler_error_does_not_require_compile_word() {
+        let result = summarize_log(Some(
+            "Checkout.swift:42:9: error: cannot find 'price' in scope\n** BUILD FAILED **",
+        ))
+        .unwrap();
+        assert_eq!(result.category, "compile");
+    }
+    #[test]
+    fn gradle_dependency_resolution_is_recognized() {
+        let result = summarize_log(Some("FAILURE: Build failed with an exception.\nCould not resolve all files for configuration ':app:debugRuntimeClasspath'.")).unwrap();
+        assert_eq!(result.category, "dependencies");
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use crate::cli::args::{Cli, Commands};
+    use clap::Parser;
+    #[test]
+    fn unavailable_evidence_keeps_error_reasons_and_null_counts() {
+        let mut server = mockito::Server::new();
+        let build = server.mock("GET", "/apps/app/builds/abc").with_status(200).with_body(r#"{"data":{"slug":"abc","triggered_at":"2026-10-01T00:00:00Z","status":2,"status_text":"failed","branch":"main","build_number":1,"triggered_workflow":"primary"}}"#).create();
+        let log = server
+            .mock("GET", "/apps/app/builds/abc/log")
+            .with_status(401)
+            .with_body("Unauthorized")
+            .create();
+        let artifacts = server
+            .mock("GET", "/apps/app/builds/abc/artifacts")
+            .with_status(403)
+            .with_body("Forbidden")
+            .create();
+        let client = BitriseClient::with_base_url("fixture-token", server.url()).unwrap();
+        let mut config = Config::default();
+        config.defaults.app_slug = Some("app".into());
+        let cli = Cli::try_parse_from(["reprise", "diagnose", "abc"]).unwrap();
+        let Commands::Diagnose(args) = cli.command else {
+            panic!("diagnose command");
+        };
+        let output = diagnose(&client, &config, &args, OutputFormat::Json).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(result["summary"].is_null());
+        assert!(result["artifact_count"].is_null());
+        assert!(result["log_error"].as_str().unwrap().contains("401"));
+        assert!(result["artifact_error"].as_str().unwrap().contains("403"));
+        build.assert();
+        log.assert();
+        artifacts.assert();
     }
 }

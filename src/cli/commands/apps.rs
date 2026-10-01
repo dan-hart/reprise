@@ -17,7 +17,11 @@ pub fn apps(client: &BitriseClient, args: &AppsArgs, format: OutputFormat) -> Re
             .collect()
     } else {
         // Apply limit
-        response.data.into_iter().take(args.limit as usize).collect()
+        response
+            .data
+            .into_iter()
+            .take(args.limit as usize)
+            .collect()
     };
 
     output::format_apps(&apps, format)

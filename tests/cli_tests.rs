@@ -27,7 +27,7 @@ fn test_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::diff("reprise 0.1.11\n"));
+        .stdout(predicate::str::diff("reprise 0.2.0\n"));
 }
 
 #[test]
@@ -115,7 +115,12 @@ fn test_config_path() {
         .args(["config", "path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(".reprise/config.toml"));
+        .stdout(predicate::str::contains(
+            std::path::Path::new(".reprise")
+                .join("config.toml")
+                .to_string_lossy()
+                .into_owned(),
+        ));
 }
 
 #[test]

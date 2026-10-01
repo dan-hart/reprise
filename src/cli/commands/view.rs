@@ -61,7 +61,10 @@ fn list_views(config: &Config, format: OutputFormat) -> Result<String> {
             }
             Ok(output)
         }
-        OutputFormat::Json => Ok(serde_json::to_string_pretty(&config.views)?),
+        OutputFormat::Json => {
+            let effective: std::collections::BTreeMap<_, _> = views.into_iter().collect();
+            Ok(serde_json::to_string_pretty(&effective)?)
+        }
     }
 }
 
@@ -125,6 +128,7 @@ fn save_view(
     limit: Option<u32>,
     format: OutputFormat,
 ) -> Result<String> {
+    reject_project_view_mutation(config, name)?;
     let saved = SavedView {
         kind: match kind {
             ViewKindArg::Builds => SavedViewKind::Builds,
@@ -153,7 +157,21 @@ fn save_view(
     }
 }
 
+fn reject_project_view_mutation(config: &Config, name: &str) -> Result<()> {
+    if config
+        .project
+        .as_ref()
+        .is_some_and(|project| project.views.contains_key(name))
+    {
+        return Err(RepriseError::Config(format!(
+            "View '{name}' is defined by the project; edit .reprise.toml to change or remove it."
+        )));
+    }
+    Ok(())
+}
+
 fn remove_view(config: &mut Config, name: &str, format: OutputFormat) -> Result<String> {
+    reject_project_view_mutation(config, name)?;
     config
         .remove_view(name)
         .ok_or_else(|| RepriseError::Config(format!("View '{}' not found", name)))?;
@@ -180,7 +198,7 @@ fn run_view(
         .ok_or_else(|| RepriseError::Config(format!("View '{}' not found", name)))?;
 
     let client = match inline_token {
-        Some(token) => BitriseClient::with_token(token)?,
+        Some(token) => BitriseClient::with_options(token, config.network.clone())?,
         None => BitriseClient::new(config)?,
     };
 
@@ -189,6 +207,7 @@ fn run_view(
             &client,
             config,
             &BuildsArgs {
+                with_search_metadata: false,
                 app: view.app,
                 status: parse_status(view.status.as_deref())?,
                 branch: view.branch,
